@@ -10,7 +10,7 @@ This configuration uses AWS S3 for Terraform state storage with **native S3 lock
 - **S3 Bucket**: `terraform-backend-bucket-085960855786`
 - **State File Key**: `eks-vpc/terraform.tfstate`
 - **Lock File**: `eks-vpc/terraform.tfstate.tflock`
-- **Region**: `ap-southeast-1`
+- **Region**: `ap-south-1`
 - **Encryption**: AES256 (server-side)
 - **Versioning**: Enabled
 - **Public Access**: Blocked
