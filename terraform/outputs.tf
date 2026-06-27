@@ -136,11 +136,6 @@ output "vpc_cni_role_arn" {
   value       = var.enable_vpc_cni ? aws_iam_role.vpc_cni[0].arn : null
 }
 
-output "pod_identity_agent_addon_status" {
-  description = "EKS Pod Identity Agent addon status"
-  value       = var.enable_pod_identity ? aws_eks_addon.pod_identity_agent[0].status : null
-}
-
 output "configure_kubectl_command" {
   description = "Command to configure kubectl"
   value       = "aws eks update-kubeconfig --region ${var.aws_region} --name ${aws_eks_cluster.main.name}"

@@ -123,11 +123,10 @@ resource "aws_eks_capability" "argocd" {
   role_arn                  = aws_iam_role.argocd_capability[0].arn
   delete_propagation_policy = "RETAIN"
 
-  configuration {
-    argo_cd {
-      namespace = "argocd"
-    }
-  }
+  # configuration.argo_cd.aws_idc is required by the provider once argo_cd is set at
+  # all (despite being documented as optional), and it points at an AWS IAM Identity
+  # Center instance for SSO - not set up here, so omit the whole block and take the
+  # capability's defaults instead of fabricating an Identity Center ARN.
 
   tags = merge(
     var.common_tags,
