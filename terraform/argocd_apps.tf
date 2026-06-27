@@ -3,14 +3,8 @@
 # itself" gets bootstrapped: one root Application pointing at a git repo, after which
 # everything else declared in that repo (including future ArgoCD config changes)
 # syncs via GitOps instead of further Terraform changes here.
-terraform {
-  required_providers {
-    kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = "~> 3.0"
-    }
-  }
-}
+# (required_providers for "kubernetes" lives in main.tf - a module can only have one
+# required_providers block, even across files, so it can't be redeclared here.)
 
 provider "kubernetes" {
   host                   = aws_eks_cluster.main.endpoint
