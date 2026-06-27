@@ -120,13 +120,31 @@ resource "kubernetes_secret_v1" "argocd_local_cluster" {
   depends_on = [aws_eks_capability.argocd]
 }
 
-# Registering the cluster creates an access entry automatically, but grants it zero
-# Kubernetes RBAC by default (least privilege - AWS makes you opt in explicitly). ArgoCD
-# needs cluster-wide READ (for health checks/drift detection across any resource type,
-# any API group, hence the custom wildcard ClusterRole rather than a built-in view policy)
-# plus WRITE scoped to where Applications actually deploy - "argocd" for now, since that's
-# the only destination namespace declared below. Extend with another namespace-scoped
-# access policy association (same pattern) if/when repos target other namespaces.
+# Registering the cluster creates an access entry automatically, but with NO
+# kubernetes_groups set - "eks-access-entry:<arn>" is a naming CONVENTION AWS's docs
+# use when you explicitly assign a group yourself, not a group every access entry
+# automatically belongs to. Bringing it under Terraform management to set an explicit
+# group is what actually makes any ClusterRoleBinding/RoleBinding take effect.
+#
+# Since EKS auto-created this entry when the ArgoCD capability itself was created, the
+# first apply of this exact resource will hit a "ResourceInUseException" unless it's
+# imported first:
+#   terraform import 'aws_eks_access_entry.argocd_capability[0]' \
+#     smart-infra-manager-eks:arn:aws:iam::085960855786:role/smart-infra-manager-eks-argocd-capability-role
+resource "aws_eks_access_entry" "argocd_capability" {
+  count             = var.enable_argocd_capability ? 1 : 0
+  cluster_name      = aws_eks_cluster.main.name
+  principal_arn     = aws_iam_role.argocd_capability[0].arn
+  kubernetes_groups = ["argocd-capability"]
+  type              = "STANDARD"
+}
+
+# Namespace-scoped WRITE for where Applications actually deploy - "argocd" for now,
+# since that's the only destination namespace declared below. This is an AWS-native
+# access policy association, applied directly to the principal with no group/RBAC
+# object needed, so it isn't affected by the group-binding bug above. Extend with
+# another namespace-scoped association (same pattern) if/when repos target other
+# namespaces.
 resource "aws_eks_access_policy_association" "argocd_write_argocd_ns" {
   count         = var.enable_argocd_capability ? 1 : 0
   cluster_name  = aws_eks_cluster.main.name
@@ -141,6 +159,10 @@ resource "aws_eks_access_policy_association" "argocd_write_argocd_ns" {
   depends_on = [aws_eks_capability.argocd]
 }
 
+# Cluster-wide READ (for health checks/drift detection across any resource type, any
+# API group - hence a custom wildcard ClusterRole rather than a built-in view policy,
+# since no AWS access policy grants true */* read). This DOES need the explicit group
+# above, bound via the ClusterRoleBinding below.
 resource "kubernetes_cluster_role_v1" "argocd_read_all" {
   count = var.enable_argocd_capability ? 1 : 0
 
@@ -172,45 +194,7 @@ resource "kubernetes_cluster_role_binding_v1" "argocd_read_all" {
 
   subject {
     kind      = "Group"
-    name      = "eks-access-entry:${aws_iam_role.argocd_capability[0].arn}"
-    api_group = "rbac.authorization.k8s.io"
-  }
-}
-
-resource "kubernetes_role_v1" "argocd_deploy" {
-  count = var.enable_argocd_capability ? 1 : 0
-
-  metadata {
-    name      = "argocd-deploy"
-    namespace = "argocd"
-  }
-
-  rule {
-    api_groups = ["*"]
-    resources  = ["*"]
-    verbs      = ["*"]
-  }
-
-  depends_on = [aws_eks_capability.argocd]
-}
-
-resource "kubernetes_role_binding_v1" "argocd_deploy" {
-  count = var.enable_argocd_capability ? 1 : 0
-
-  metadata {
-    name      = "argocd-deploy"
-    namespace = "argocd"
-  }
-
-  role_ref {
-    api_group = "rbac.authorization.k8s.io"
-    kind      = "Role"
-    name      = kubernetes_role_v1.argocd_deploy[0].metadata[0].name
-  }
-
-  subject {
-    kind      = "Group"
-    name      = "eks-access-entry:${aws_iam_role.argocd_capability[0].arn}"
+    name      = aws_eks_access_entry.argocd_capability[0].kubernetes_groups[0]
     api_group = "rbac.authorization.k8s.io"
   }
 }
@@ -258,7 +242,7 @@ resource "kubernetes_manifest" "argocd_app_of_apps" {
     aws_eks_capability.argocd,
     kubernetes_secret_v1.argocd_github_org_creds,
     kubernetes_secret_v1.argocd_local_cluster,
-    kubernetes_role_binding_v1.argocd_deploy,
+    aws_eks_access_policy_association.argocd_write_argocd_ns,
     kubernetes_cluster_role_binding_v1.argocd_read_all,
   ]
 }
@@ -303,7 +287,7 @@ resource "kubernetes_manifest" "argocd_self_managed" {
     aws_eks_capability.argocd,
     kubernetes_secret_v1.argocd_github_org_creds,
     kubernetes_secret_v1.argocd_local_cluster,
-    kubernetes_role_binding_v1.argocd_deploy,
+    aws_eks_access_policy_association.argocd_write_argocd_ns,
     kubernetes_cluster_role_binding_v1.argocd_read_all,
   ]
 }
