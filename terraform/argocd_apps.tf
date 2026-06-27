@@ -126,6 +126,12 @@ resource "kubernetes_secret_v1" "argocd_local_cluster" {
 # automatically belongs to. Bringing it under Terraform management to set an explicit
 # group is what actually makes any ClusterRoleBinding/RoleBinding take effect.
 #
+# Defined once here (rather than reading kubernetes_groups back off the resource,
+# which is a set and can't be indexed) and reused below for the ClusterRoleBinding subject.
+locals {
+  argocd_capability_group = "argocd-capability"
+}
+
 # Since EKS auto-created this entry when the ArgoCD capability itself was created, the
 # first apply of this exact resource will hit a "ResourceInUseException" unless it's
 # imported first:
@@ -135,7 +141,7 @@ resource "aws_eks_access_entry" "argocd_capability" {
   count             = var.enable_argocd_capability ? 1 : 0
   cluster_name      = aws_eks_cluster.main.name
   principal_arn     = aws_iam_role.argocd_capability[0].arn
-  kubernetes_groups = ["argocd-capability"]
+  kubernetes_groups = [local.argocd_capability_group]
   type              = "STANDARD"
 }
 
@@ -194,7 +200,7 @@ resource "kubernetes_cluster_role_binding_v1" "argocd_read_all" {
 
   subject {
     kind      = "Group"
-    name      = aws_eks_access_entry.argocd_capability[0].kubernetes_groups[0]
+    name      = local.argocd_capability_group
     api_group = "rbac.authorization.k8s.io"
   }
 }
