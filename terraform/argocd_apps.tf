@@ -32,13 +32,15 @@ provider "kubernetes" {
 # directly - ArgoCD resolves the actual username/token from Secrets Manager at sync time.
 #
 # Terraform only looks up this secret by name - it never creates or holds the actual
-# GitHub PAT, in Terraform state, tfvars, or CI secrets. Create it yourself once with:
-#   aws secretsmanager create-secret \
-#     --name "${cluster_name}-argocd-repo-creds" \
+# GitHub PAT, in Terraform state, tfvars, or CI secrets. Create/update it yourself with:
+#   aws secretsmanager put-secret-value \
+#     --secret-id "GIT_HUB_PAT" \
 #     --secret-string '{"username":"<github-username>","token":"<github-pat>"}'
+# The JSON keys MUST be exactly "username" and "token" - the ArgoCD capability's own
+# secretArn parsing expects those names specifically and isn't configurable here.
 data "aws_secretsmanager_secret" "argocd_repo" {
   count = var.enable_argocd_capability ? 1 : 0
-  name  = "${var.cluster_name}-argocd-repo-creds"
+  name  = "GIT_HUB_PAT"
 }
 
 resource "aws_iam_policy" "argocd_repo_secret" {
