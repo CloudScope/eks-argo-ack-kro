@@ -209,16 +209,11 @@ resource "aws_eks_capability" "argocd" {
   depends_on = [aws_eks_cluster.main, time_sleep.argocd_capability_role]
 }
 
-# ACK capability needs to read Kubernetes secrets it doesn't own (e.g. DB passwords) -
-# grant it via an EKS access entry, per AWS guidance for the ACK capability
-resource "aws_eks_access_entry" "ack_capability" {
-  count         = var.enable_ack_capability ? 1 : 0
-  cluster_name  = aws_eks_cluster.main.name
-  principal_arn = aws_iam_role.ack_capability[0].arn
-
-  depends_on = [aws_eks_capability.ack]
-}
-
+# ACK capability needs to read Kubernetes secrets it doesn't own (e.g. DB passwords).
+# EKS automatically creates an access entry for the capability role when the capability
+# itself is created - creating our own aws_eks_access_entry here would conflict with
+# that auto-created one (ResourceInUseException). We only need to associate the extra
+# secret-reader policy onto the entry EKS already made.
 resource "aws_eks_access_policy_association" "ack_secret_reader" {
   count         = var.enable_ack_capability ? 1 : 0
   cluster_name  = aws_eks_cluster.main.name
@@ -229,5 +224,5 @@ resource "aws_eks_access_policy_association" "ack_secret_reader" {
     type = "cluster"
   }
 
-  depends_on = [aws_eks_access_entry.ack_capability]
+  depends_on = [aws_eks_capability.ack]
 }
