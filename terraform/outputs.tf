@@ -141,6 +141,11 @@ output "vpc_cni_role_arn" {
   value       = var.enable_vpc_cni ? aws_iam_role.vpc_cni[0].arn : null
 }
 
+output "external_secrets_role_arn" {
+  description = "External Secrets Operator IAM role ARN (bind this via Pod Identity to the service account the Helm chart actually creates, if it differs from the default)"
+  value       = var.enable_external_secrets ? aws_iam_role.external_secrets[0].arn : null
+}
+
 output "configure_kubectl_command" {
   description = "Command to configure kubectl"
   value       = "aws eks update-kubeconfig --region ${var.aws_region} --name ${aws_eks_cluster.main.name}"

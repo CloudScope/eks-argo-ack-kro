@@ -31,6 +31,13 @@ jobs:
       id-token: write
     environment:
       name: ${{ (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) && 'production' || '' }}
+    env:
+      # terraform.tfvars is gitignored and never reaches CI - these two required
+      # variables (no default, since they're credentials) must come from GitHub
+      # Actions secrets instead. Add GH_REPO_PAT_USERNAME/GH_REPO_PAT_TOKEN under
+      # Settings > Secrets and variables > Actions before this workflow can plan/apply.
+      TF_VAR_github_repo_username: ${{ secrets.GH_REPO_PAT_USERNAME }}
+      TF_VAR_github_repo_token: ${{ secrets.GH_REPO_PAT_TOKEN }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7

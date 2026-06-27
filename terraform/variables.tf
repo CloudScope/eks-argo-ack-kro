@@ -135,3 +135,49 @@ variable "enable_vpc_cni" {
   type        = bool
   default     = true
 }
+
+# --- ArgoCD self-management (app-of-apps) ---
+
+variable "argocd_apps_repo_url" {
+  description = "Git repo ArgoCD watches as its app-of-apps source of truth"
+  type        = string
+  default     = "https://github.com/CloudScope/argo-app-of-apps"
+}
+
+variable "argocd_apps_repo_revision" {
+  description = "Git revision (branch/tag) of argocd_apps_repo_url to track"
+  type        = string
+  default     = "main"
+}
+
+variable "argocd_apps_repo_path" {
+  description = "Path within argocd_apps_repo_url containing the Application/AppProject manifests"
+  type        = string
+  default     = "."
+}
+
+variable "github_repo_username" {
+  description = "GitHub username for ArgoCD to authenticate to the private argocd_apps_repo_url repo (personal access token auth). Generate a token at github.com/settings/tokens with read-only repo access."
+  type        = string
+  sensitive   = true
+}
+
+variable "github_repo_token" {
+  description = "GitHub personal access token (read-only repo scope) for ArgoCD to authenticate to the private argocd_apps_repo_url repo"
+  type        = string
+  sensitive   = true
+}
+
+# --- External Secrets Operator ---
+
+variable "enable_external_secrets" {
+  description = "Create the IAM role and Pod Identity association for External Secrets Operator (the operator itself is deployed via the ArgoCD GitOps repo, not Terraform)"
+  type        = bool
+  default     = true
+}
+
+variable "external_secrets_secret_arns" {
+  description = "Secrets Manager secret ARN patterns External Secrets Operator is allowed to read. Leave empty to default to a prefix matching this cluster's naming convention (\"<cluster_name>-*\"); override with exact ARNs once your real secret names are known."
+  type        = list(string)
+  default     = []
+}
