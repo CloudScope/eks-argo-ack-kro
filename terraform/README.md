@@ -1,6 +1,6 @@
-# EKS-Ready VPC Terraform Configuration
+# EKS + VPC Terraform Configuration
 
-This Terraform configuration creates a production-ready VPC infrastructure for AWS EKS clusters.
+This Terraform configuration creates a production-ready VPC and an EKS 1.36 cluster (ArgoCD/ACK/kro capabilities, Pod Identity, AWS VPC CNI, 2 on-demand + 3 spot nodes) in a single state.
 
 ## Architecture Overview
 
@@ -171,10 +171,35 @@ When creating your EKS cluster, use the same `project_name` value for automatic 
 
 ```
 terraform/
-├── main.tf              # Main VPC and networking resources
-├── variables.tf         # Input variables definition
-├── outputs.tf           # Output values
-└── terraform.tfvars     # Variable values
+├── main.tf              # VPC, subnets, route tables, NAT (existing)
+├── iam.tf               # EKS cluster/node IAM roles
+├── security_groups.tf   # EKS cluster/node security groups
+├── eks_cluster.tf        # EKS cluster, pod identity agent, vpc-cni/coredns/kube-proxy addons
+├── node_groups.tf        # Launch template, on-demand + spot managed node groups, ASG tags
+├── capabilities.tf       # ACK / kro / ArgoCD EKS Capabilities + ACK access entry
+├── variables.tf          # Input variables (VPC + EKS)
+├── outputs.tf             # Output values (VPC + EKS)
+├── backend.tf             # S3 state backend
+└── terraform.tfvars       # Variable values
+```
+
+## EKS Cluster
+
+The cluster is created in the same VPC/subnets defined in `main.tf` (no `existing_vpc_id` lookups -
+direct resource references, e.g. `aws_subnet.private[*].id`). Key points:
+
+- **Kubernetes 1.36**, control plane logging enabled, access mode `API_AND_CONFIG_MAP`.
+- **Nodes**: 2 on-demand + 3 spot (fixed size, capped at 5 total), Graviton (arm64) `t4g.large`/`m6g.large` family, in private subnets, each EKS managed node group backed by its own Auto Scaling Group. Container images must support `arm64` (build multi-arch images, or use `arm64`-native ones).
+- **Pod Identity**: `eks-pod-identity-agent` addon + a Pod Identity association for the VPC CNI's `aws-node` service account (no IRSA/OIDC).
+- **Capabilities**: ACK, kro, and ArgoCD enabled via the native `aws_eks_capability` resource (AWS-managed, no Helm install required).
+
+```bash
+terraform init
+terraform plan
+terraform apply
+
+aws eks update-kubeconfig --region ap-south-1 --name smart-infra-manager-eks
+kubectl get nodes
 ```
 
 ## Troubleshooting

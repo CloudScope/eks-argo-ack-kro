@@ -55,3 +55,77 @@ variable "common_tags" {
     GitRepo   = "https://github.com/CloudScope/eks-argo-ack-kro"
   }
 }
+
+# --- EKS cluster ---
+
+variable "cluster_name" {
+  description = "EKS cluster name"
+  type        = string
+  default     = "smart-infra-manager-eks"
+}
+
+variable "cluster_version" {
+  description = "Kubernetes version"
+  type        = string
+  default     = "1.36"
+}
+
+variable "on_demand_desired_size" {
+  description = "Number of on-demand (dedicated) nodes"
+  type        = number
+  default     = 2
+}
+
+variable "spot_desired_size" {
+  description = "Number of spot nodes"
+  type        = number
+  default     = 3
+}
+
+variable "on_demand_instance_types" {
+  description = "Graviton (arm64) EC2 instance types for on-demand worker nodes. Must stay arm64-only - EKS node groups can't mix CPU architectures."
+  type        = list(string)
+  default     = ["t4g.large", "m6g.large"]
+}
+
+variable "spot_instance_types" {
+  description = "Graviton (arm64) EC2 instance types for spot worker nodes. Kept to the same vCPU/memory size (2 vCPU / 8 GiB) across families, per AWS guidance, so cluster-autoscaler scaling stays predictable and the price-capacity-optimized allocation strategy has more capacity pools to choose from, which reduces interruption frequency."
+  type        = list(string)
+  default     = ["t4g.large", "m6g.large", "m6gn.large", "m7g.large"]
+}
+
+variable "node_ami_type" {
+  description = "EKS-optimized AMI type for worker nodes. AL2023_ARM_64_STANDARD matches the Graviton instance types above; change this too if you ever go back to x86_64."
+  type        = string
+  default     = "AL2023_ARM_64_STANDARD"
+}
+
+variable "enable_pod_identity" {
+  description = "Enable EKS Pod Identity"
+  type        = bool
+  default     = true
+}
+
+variable "enable_ack_capability" {
+  description = "Enable ACK capability"
+  type        = bool
+  default     = true
+}
+
+variable "enable_kro_capability" {
+  description = "Enable KRO capability"
+  type        = bool
+  default     = true
+}
+
+variable "enable_argocd_capability" {
+  description = "Enable ArgoCD capability"
+  type        = bool
+  default     = true
+}
+
+variable "enable_vpc_cni" {
+  description = "Enable AWS VPC CNI"
+  type        = bool
+  default     = true
+}
