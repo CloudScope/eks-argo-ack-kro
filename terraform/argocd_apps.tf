@@ -92,6 +92,129 @@ resource "kubernetes_secret_v1" "argocd_github_org_creds" {
   depends_on = [aws_eks_capability.argocd]
 }
 
+# The ArgoCD capability does NOT auto-register the cluster it runs on - per
+# docs.aws.amazon.com/eks/latest/userguide/argocd-register-clusters.html, Applications
+# can't sync anywhere until at least one cluster is explicitly registered. This secret
+# holds no live credentials (just the EKS cluster ARN, a name, and a project) - actual
+# auth flows through the IAM access entry the capability already has, so unlike the
+# repo-creds secret above, this is safe to manage declaratively rather than running
+# `argocd cluster add` by hand. Note the "server" field must be the cluster ARN, not
+# the usual https://kubernetes.default.svc - that's explicitly unsupported here.
+resource "kubernetes_secret_v1" "argocd_local_cluster" {
+  count = var.enable_argocd_capability ? 1 : 0
+
+  metadata {
+    name      = "local-cluster"
+    namespace = "argocd"
+    labels = {
+      "argocd.argoproj.io/secret-type" = "cluster"
+    }
+  }
+
+  data = {
+    name    = "local-cluster"
+    server  = aws_eks_cluster.main.arn
+    project = "default"
+  }
+
+  depends_on = [aws_eks_capability.argocd]
+}
+
+# Registering the cluster creates an access entry automatically, but grants it zero
+# Kubernetes RBAC by default (least privilege - AWS makes you opt in explicitly). ArgoCD
+# needs cluster-wide READ (for health checks/drift detection across any resource type,
+# any API group, hence the custom wildcard ClusterRole rather than a built-in view policy)
+# plus WRITE scoped to where Applications actually deploy - "argocd" for now, since that's
+# the only destination namespace declared below. Extend with another namespace-scoped
+# access policy association (same pattern) if/when repos target other namespaces.
+resource "aws_eks_access_policy_association" "argocd_write_argocd_ns" {
+  count         = var.enable_argocd_capability ? 1 : 0
+  cluster_name  = aws_eks_cluster.main.name
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy"
+  principal_arn = aws_iam_role.argocd_capability[0].arn
+
+  access_scope {
+    type       = "namespace"
+    namespaces = ["argocd"]
+  }
+
+  depends_on = [aws_eks_capability.argocd]
+}
+
+resource "kubernetes_cluster_role_v1" "argocd_read_all" {
+  count = var.enable_argocd_capability ? 1 : 0
+
+  metadata {
+    name = "argocd-read-all"
+  }
+
+  rule {
+    api_groups = ["*"]
+    resources  = ["*"]
+    verbs      = ["get", "list", "watch"]
+  }
+
+  depends_on = [aws_eks_capability.argocd]
+}
+
+resource "kubernetes_cluster_role_binding_v1" "argocd_read_all" {
+  count = var.enable_argocd_capability ? 1 : 0
+
+  metadata {
+    name = "argocd-read-all"
+  }
+
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role_v1.argocd_read_all[0].metadata[0].name
+  }
+
+  subject {
+    kind      = "Group"
+    name      = "eks-access-entry:${aws_iam_role.argocd_capability[0].arn}"
+    api_group = "rbac.authorization.k8s.io"
+  }
+}
+
+resource "kubernetes_role_v1" "argocd_deploy" {
+  count = var.enable_argocd_capability ? 1 : 0
+
+  metadata {
+    name      = "argocd-deploy"
+    namespace = "argocd"
+  }
+
+  rule {
+    api_groups = ["*"]
+    resources  = ["*"]
+    verbs      = ["*"]
+  }
+
+  depends_on = [aws_eks_capability.argocd]
+}
+
+resource "kubernetes_role_binding_v1" "argocd_deploy" {
+  count = var.enable_argocd_capability ? 1 : 0
+
+  metadata {
+    name      = "argocd-deploy"
+    namespace = "argocd"
+  }
+
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role_v1.argocd_deploy[0].metadata[0].name
+  }
+
+  subject {
+    kind      = "Group"
+    name      = "eks-access-entry:${aws_iam_role.argocd_capability[0].arn}"
+    api_group = "rbac.authorization.k8s.io"
+  }
+}
+
 # The IAM principal running `terraform apply` needs Kubernetes RBAC access to create
 # this Application. EKS automatically grants the principal that created the cluster
 # system:masters-equivalent access, so this works as long as the same principal (e.g.
@@ -119,7 +242,7 @@ resource "kubernetes_manifest" "argocd_app_of_apps" {
         }
       }
       destination = {
-        server    = "https://kubernetes.default.svc"
+        name      = "local-cluster"
         namespace = "argocd"
       }
       syncPolicy = {
@@ -131,7 +254,13 @@ resource "kubernetes_manifest" "argocd_app_of_apps" {
     }
   }
 
-  depends_on = [aws_eks_capability.argocd, kubernetes_secret_v1.argocd_github_org_creds]
+  depends_on = [
+    aws_eks_capability.argocd,
+    kubernetes_secret_v1.argocd_github_org_creds,
+    kubernetes_secret_v1.argocd_local_cluster,
+    kubernetes_role_binding_v1.argocd_deploy,
+    kubernetes_cluster_role_binding_v1.argocd_read_all,
+  ]
 }
 
 # Second, independent Application watching cloudscope-argocd-self-managed - kept
@@ -158,7 +287,7 @@ resource "kubernetes_manifest" "argocd_self_managed" {
         }
       }
       destination = {
-        server    = "https://kubernetes.default.svc"
+        name      = "local-cluster"
         namespace = "argocd"
       }
       syncPolicy = {
@@ -170,5 +299,11 @@ resource "kubernetes_manifest" "argocd_self_managed" {
     }
   }
 
-  depends_on = [aws_eks_capability.argocd, kubernetes_secret_v1.argocd_github_org_creds]
+  depends_on = [
+    aws_eks_capability.argocd,
+    kubernetes_secret_v1.argocd_github_org_creds,
+    kubernetes_secret_v1.argocd_local_cluster,
+    kubernetes_role_binding_v1.argocd_deploy,
+    kubernetes_cluster_role_binding_v1.argocd_read_all,
+  ]
 }
