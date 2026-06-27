@@ -89,9 +89,9 @@ variable "on_demand_instance_types" {
 }
 
 variable "spot_instance_types" {
-  description = "Graviton (arm64) EC2 instance types for spot worker nodes. Kept to the same vCPU/memory size (2 vCPU / 8 GiB) across families, per AWS guidance, so cluster-autoscaler scaling stays predictable and the price-capacity-optimized allocation strategy has more capacity pools to choose from, which reduces interruption frequency."
+  description = "Graviton (arm64) EC2 instance types for spot worker nodes. Kept to the same vCPU/memory size (2 vCPU / 8 GiB) across families, per AWS guidance, so cluster-autoscaler scaling stays predictable and the price-capacity-optimized allocation strategy has more capacity pools to choose from, which reduces interruption frequency. Only includes types confirmed available in ap-south-1 - verify region availability before adding more (m6gn.large/m7g.large failed with Ec2InstanceTypeDoesNotExist here)."
   type        = list(string)
-  default     = ["t4g.large", "m6g.large", "m6gn.large", "m7g.large"]
+  default     = ["t4g.large", "m6g.large"]
 }
 
 variable "node_ami_type" {
@@ -104,6 +104,12 @@ variable "enable_pod_identity" {
   description = "Enable EKS Pod Identity"
   type        = bool
   default     = true
+}
+
+variable "argocd_admin_group_name" {
+  description = "Display name of the AWS IAM Identity Center group created and mapped to ArgoCD's ADMIN role."
+  type        = string
+  default     = "ARGOCD_ADMIN"
 }
 
 variable "enable_ack_capability" {

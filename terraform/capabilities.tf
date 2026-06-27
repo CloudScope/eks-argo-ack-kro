@@ -7,10 +7,10 @@ resource "aws_iam_role" "ack_capability" {
     Version = "2012-10-17"
     Statement = [
       {
-        Action = "sts:AssumeRole"
+        Action = ["sts:AssumeRole", "sts:TagSession"]
         Effect = "Allow"
         Principal = {
-          Service = "eks.amazonaws.com"
+          Service = "capabilities.eks.amazonaws.com"
         }
       }
     ]
@@ -33,10 +33,10 @@ resource "aws_iam_role" "kro_capability" {
     Version = "2012-10-17"
     Statement = [
       {
-        Action = "sts:AssumeRole"
+        Action = ["sts:AssumeRole", "sts:TagSession"]
         Effect = "Allow"
         Principal = {
-          Service = "eks.amazonaws.com"
+          Service = "capabilities.eks.amazonaws.com"
         }
       }
     ]
@@ -59,10 +59,10 @@ resource "aws_iam_role" "argocd_capability" {
     Version = "2012-10-17"
     Statement = [
       {
-        Action = "sts:AssumeRole"
+        Action = ["sts:AssumeRole", "sts:TagSession"]
         Effect = "Allow"
         Principal = {
-          Service = "eks.amazonaws.com"
+          Service = "capabilities.eks.amazonaws.com"
         }
       }
     ]
@@ -114,6 +114,20 @@ resource "aws_eks_capability" "kro" {
   depends_on = [aws_eks_cluster.main]
 }
 
+# AWS supports exactly one IAM Identity Center instance per organization/account, so
+# it can be resolved automatically rather than asking for the ARN to be pasted in.
+data "aws_ssoadmin_instances" "this" {
+  count = var.enable_argocd_capability ? 1 : 0
+}
+
+# AWS best practice: map a group (not individual users) to the ArgoCD ADMIN role
+resource "aws_identitystore_group" "argocd_admin" {
+  count             = var.enable_argocd_capability ? 1 : 0
+  identity_store_id = tolist(data.aws_ssoadmin_instances.this[0].identity_store_ids)[0]
+  display_name      = var.argocd_admin_group_name
+  description       = "Full (ADMIN) access to the ${var.cluster_name} ArgoCD capability"
+}
+
 # Enable ArgoCD Capability
 resource "aws_eks_capability" "argocd" {
   count                     = var.enable_argocd_capability ? 1 : 0
@@ -123,10 +137,29 @@ resource "aws_eks_capability" "argocd" {
   role_arn                  = aws_iam_role.argocd_capability[0].arn
   delete_propagation_policy = "RETAIN"
 
-  # configuration.argo_cd.aws_idc is required by the provider once argo_cd is set at
-  # all (despite being documented as optional), and it points at an AWS IAM Identity
-  # Center instance for SSO - not set up here, so omit the whole block and take the
-  # capability's defaults instead of fabricating an Identity Center ARN.
+  configuration {
+    argo_cd {
+      namespace = "argocd"
+
+      # No network_access.vpce_ids block - that's what restricts the Argo CD endpoint
+      # to private VPC-only access via PrivateLink. Leaving it unset is deliberate:
+      # the server stays reachable over the public internet, gated by the aws_idc/
+      # rbac_role_mapping SSO login below.
+
+      aws_idc {
+        idc_instance_arn = tolist(data.aws_ssoadmin_instances.this[0].arns)[0]
+      }
+
+      rbac_role_mapping {
+        role = "ADMIN"
+
+        identity {
+          id   = aws_identitystore_group.argocd_admin[0].group_id
+          type = "SSO_GROUP"
+        }
+      }
+    }
+  }
 
   tags = merge(
     var.common_tags,

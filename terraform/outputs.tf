@@ -131,6 +131,11 @@ output "argocd_capability_role_arn" {
   value       = var.enable_argocd_capability ? aws_iam_role.argocd_capability[0].arn : null
 }
 
+output "argocd_url" {
+  description = "ArgoCD server URL (log in via the ARGOCD_ADMIN Identity Center group)"
+  value       = var.enable_argocd_capability ? aws_eks_capability.argocd[0].configuration[0].argo_cd[0].server_url : null
+}
+
 output "vpc_cni_role_arn" {
   description = "VPC CNI IAM role ARN"
   value       = var.enable_vpc_cni ? aws_iam_role.vpc_cni[0].arn : null
