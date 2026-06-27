@@ -30,25 +30,15 @@ provider "kubernetes" {
 # ArgoCD capability role is granted read access to just this one secret. The Kubernetes
 # Repository Secret below references the Secrets Manager ARN, not the credentials
 # directly - ArgoCD resolves the actual username/token from Secrets Manager at sync time.
-resource "aws_secretsmanager_secret" "argocd_repo" {
+#
+# Terraform only looks up this secret by name - it never creates or holds the actual
+# GitHub PAT, in Terraform state, tfvars, or CI secrets. Create it yourself once with:
+#   aws secretsmanager create-secret \
+#     --name "${cluster_name}-argocd-repo-creds" \
+#     --secret-string '{"username":"<github-username>","token":"<github-pat>"}'
+data "aws_secretsmanager_secret" "argocd_repo" {
   count = var.enable_argocd_capability ? 1 : 0
   name  = "${var.cluster_name}-argocd-repo-creds"
-
-  tags = merge(
-    var.common_tags,
-    {
-      Name = "${var.cluster_name}-argocd-repo-creds"
-    }
-  )
-}
-
-resource "aws_secretsmanager_secret_version" "argocd_repo" {
-  count     = var.enable_argocd_capability ? 1 : 0
-  secret_id = aws_secretsmanager_secret.argocd_repo[0].id
-  secret_string = jsonencode({
-    username = var.github_repo_username
-    token    = var.github_repo_token
-  })
 }
 
 resource "aws_iam_policy" "argocd_repo_secret" {
@@ -62,7 +52,7 @@ resource "aws_iam_policy" "argocd_repo_secret" {
       {
         Effect   = "Allow"
         Action   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
-        Resource = aws_secretsmanager_secret.argocd_repo[0].arn
+        Resource = data.aws_secretsmanager_secret.argocd_repo[0].arn
       }
     ]
   })
@@ -88,7 +78,7 @@ resource "kubernetes_secret_v1" "argocd_repo" {
   data = {
     type      = "git"
     url       = var.argocd_apps_repo_url
-    secretArn = aws_secretsmanager_secret.argocd_repo[0].arn
+    secretArn = data.aws_secretsmanager_secret.argocd_repo[0].arn
   }
 
   depends_on = [aws_eks_capability.argocd]

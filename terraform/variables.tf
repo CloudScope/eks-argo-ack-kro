@@ -156,18 +156,6 @@ variable "argocd_apps_repo_path" {
   default     = "."
 }
 
-variable "github_repo_username" {
-  description = "GitHub username for ArgoCD to authenticate to the private argocd_apps_repo_url repo (personal access token auth). Generate a token at github.com/settings/tokens with read-only repo access."
-  type        = string
-  sensitive   = true
-}
-
-variable "github_repo_token" {
-  description = "GitHub personal access token (read-only repo scope) for ArgoCD to authenticate to the private argocd_apps_repo_url repo"
-  type        = string
-  sensitive   = true
-}
-
 # --- External Secrets Operator ---
 
 variable "enable_external_secrets" {
