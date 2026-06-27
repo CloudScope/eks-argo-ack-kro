@@ -66,20 +66,26 @@ resource "aws_iam_role_policy_attachment" "argocd_repo_secret" {
   role       = aws_iam_role.argocd_capability[0].name
 }
 
-resource "kubernetes_secret_v1" "argocd_repo" {
+# A repo-creds *template* (not a per-repo Repository secret) scoped to the
+# https://github.com/CloudScope URL prefix - one GIT_HUB_PAT secret authenticates
+# ArgoCD to every repo under that org, including argo_apps_repo_url and
+# argocd_self_managed_repo_url today, and any future CloudScope repo without
+# further Terraform changes. See:
+# https://argo-cd.readthedocs.io/en/stable/operator-manual/argocd-repo-creds-yaml/
+resource "kubernetes_secret_v1" "argocd_github_org_creds" {
   count = var.enable_argocd_capability ? 1 : 0
 
   metadata {
-    name      = "argo-app-of-apps-repo"
+    name      = "cloudscope-org-repo-creds"
     namespace = "argocd"
     labels = {
-      "argocd.argoproj.io/secret-type" = "repository"
+      "argocd.argoproj.io/secret-type" = "repo-creds"
     }
   }
 
   data = {
     type      = "git"
-    url       = var.argocd_apps_repo_url
+    url       = "https://github.com/CloudScope"
     secretArn = data.aws_secretsmanager_secret.argocd_repo[0].arn
   }
 
@@ -125,5 +131,44 @@ resource "kubernetes_manifest" "argocd_app_of_apps" {
     }
   }
 
-  depends_on = [aws_eks_capability.argocd, kubernetes_secret_v1.argocd_repo]
+  depends_on = [aws_eks_capability.argocd, kubernetes_secret_v1.argocd_github_org_creds]
+}
+
+# Second, independent Application watching cloudscope-argocd-self-managed - kept
+# separate from app-of-apps rather than folded into it, per explicit instruction.
+# Both repos are covered by the same org-wide credential template above.
+resource "kubernetes_manifest" "argocd_self_managed" {
+  count = var.enable_argocd_capability ? 1 : 0
+
+  manifest = {
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
+    metadata = {
+      name      = "argocd-self-managed"
+      namespace = "argocd"
+    }
+    spec = {
+      project = "default"
+      source = {
+        repoURL        = var.argocd_self_managed_repo_url
+        targetRevision = var.argocd_self_managed_repo_revision
+        path           = var.argocd_self_managed_repo_path
+        directory = {
+          recurse = true
+        }
+      }
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = "argocd"
+      }
+      syncPolicy = {
+        automated = {
+          prune    = true
+          selfHeal = true
+        }
+      }
+    }
+  }
+
+  depends_on = [aws_eks_capability.argocd, kubernetes_secret_v1.argocd_github_org_creds]
 }

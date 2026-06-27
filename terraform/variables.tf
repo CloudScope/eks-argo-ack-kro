@@ -156,6 +156,24 @@ variable "argocd_apps_repo_path" {
   default     = "."
 }
 
+variable "argocd_self_managed_repo_url" {
+  description = "Second, independent git repo ArgoCD watches (separate Application from argocd_apps_repo_url)"
+  type        = string
+  default     = "https://github.com/CloudScope/cloudscope-argocd-self-managed"
+}
+
+variable "argocd_self_managed_repo_revision" {
+  description = "Git revision (branch/tag) of argocd_self_managed_repo_url to track"
+  type        = string
+  default     = "main"
+}
+
+variable "argocd_self_managed_repo_path" {
+  description = "Path within argocd_self_managed_repo_url containing the Application/AppProject manifests"
+  type        = string
+  default     = "."
+}
+
 # --- External Secrets Operator ---
 
 variable "enable_external_secrets" {
