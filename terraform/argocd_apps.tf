@@ -6,14 +6,22 @@
 # (required_providers for "kubernetes" lives in main.tf - a module can only have one
 # required_providers block, even across files, so it can't be redeclared here.)
 
+# Uses `exec` (shells out to `aws eks get-token` at the moment of each API call)
+# instead of a statically-fetched data.aws_eks_cluster_auth token. That token is only
+# valid ~15 minutes; with node groups, capabilities, and time_sleep waits ahead of this
+# in the dependency graph, a long apply can easily outlive a token fetched once near
+# the start, causing "Unauthorized" errors here even though the config is correct.
+# Requires the AWS CLI to be present wherever `terraform apply` runs (already true on
+# GitHub-hosted Actions runners, using whatever credentials configure-aws-credentials set up).
 provider "kubernetes" {
   host                   = aws_eks_cluster.main.endpoint
   cluster_ca_certificate = base64decode(aws_eks_cluster.main.certificate_authority[0].data)
-  token                  = data.aws_eks_cluster_auth.cluster.token
-}
 
-data "aws_eks_cluster_auth" "cluster" {
-  name = aws_eks_cluster.main.name
+  exec {
+    api_version = "client.authentication.k8s.io/v1"
+    command     = "aws"
+    args        = ["eks", "get-token", "--cluster-name", aws_eks_cluster.main.name, "--region", var.aws_region]
+  }
 }
 
 # argocd_apps_repo_url is a private GitHub repo. Per AWS's "Username and token
