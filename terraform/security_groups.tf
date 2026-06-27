@@ -20,11 +20,11 @@ resource "aws_security_group" "cluster" {
 
 resource "aws_vpc_security_group_ingress_rule" "cluster_https_from_vpc" {
   security_group_id = aws_security_group.cluster.id
-  cidr_ipv4          = aws_vpc.main.cidr_block
-  from_port          = 443
-  to_port             = 443
-  ip_protocol        = "tcp"
-  description         = "Allow HTTPS from VPC"
+  cidr_ipv4         = aws_vpc.main.cidr_block
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+  description       = "Allow HTTPS from VPC"
 }
 
 resource "aws_vpc_security_group_ingress_rule" "cluster_from_node" {
@@ -38,9 +38,9 @@ resource "aws_vpc_security_group_ingress_rule" "cluster_from_node" {
 
 resource "aws_vpc_security_group_egress_rule" "cluster_all_outbound" {
   security_group_id = aws_security_group.cluster.id
-  cidr_ipv4          = "0.0.0.0/0"
-  ip_protocol        = "-1"
-  description         = "Allow all outbound traffic"
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
+  description       = "Allow all outbound traffic"
 }
 
 # Node Security Group
@@ -68,20 +68,20 @@ resource "aws_vpc_security_group_ingress_rule" "node_from_cluster" {
 
 resource "aws_vpc_security_group_ingress_rule" "node_https_from_vpc" {
   security_group_id = aws_security_group.node.id
-  cidr_ipv4          = aws_vpc.main.cidr_block
-  from_port          = 443
-  to_port             = 443
-  ip_protocol        = "tcp"
-  description         = "Allow HTTPS within VPC"
+  cidr_ipv4         = aws_vpc.main.cidr_block
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+  description       = "Allow HTTPS within VPC"
 }
 
 resource "aws_vpc_security_group_ingress_rule" "node_dns_from_vpc" {
   security_group_id = aws_security_group.node.id
-  cidr_ipv4          = aws_vpc.main.cidr_block
-  from_port          = 53
-  to_port             = 53
-  ip_protocol        = "udp"
-  description         = "Allow DNS from VPC"
+  cidr_ipv4         = aws_vpc.main.cidr_block
+  from_port         = 53
+  to_port           = 53
+  ip_protocol       = "udp"
+  description       = "Allow DNS from VPC"
 }
 
 resource "aws_vpc_security_group_ingress_rule" "node_self" {
@@ -95,7 +95,7 @@ resource "aws_vpc_security_group_ingress_rule" "node_self" {
 
 resource "aws_vpc_security_group_egress_rule" "node_all_outbound" {
   security_group_id = aws_security_group.node.id
-  cidr_ipv4          = "0.0.0.0/0"
-  ip_protocol        = "-1"
-  description         = "Allow all outbound traffic"
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
+  description       = "Allow all outbound traffic"
 }

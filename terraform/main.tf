@@ -3,9 +3,13 @@ terraform {
 
   required_providers {
     aws = {
-      source  = "hashicorp/aws"
+      source = "hashicorp/aws"
       # >= 6.25.0 required: aws_eks_capability was added in that release
       version = ">= 6.25.0, < 7.0.0"
+    }
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.11"
     }
   }
 }
@@ -64,9 +68,9 @@ resource "aws_subnet" "public" {
   tags = merge(
     var.common_tags,
     {
-      Name                                    = "${var.project_name}-public-subnet-${count.index + 1}"
-      Type                                    = "Public"
-      "kubernetes.io/role/elb"                = "1"
+      Name                                        = "${var.project_name}-public-subnet-${count.index + 1}"
+      Type                                        = "Public"
+      "kubernetes.io/role/elb"                    = "1"
       "kubernetes.io/cluster/${var.project_name}" = "shared"
     }
   )
@@ -82,9 +86,9 @@ resource "aws_subnet" "private" {
   tags = merge(
     var.common_tags,
     {
-      Name                                     = "${var.project_name}-private-subnet-${count.index + 1}"
-      Type                                     = "Private"
-      "kubernetes.io/role/internal-elb"        = "1"
+      Name                                        = "${var.project_name}-private-subnet-${count.index + 1}"
+      Type                                        = "Private"
+      "kubernetes.io/role/internal-elb"           = "1"
       "kubernetes.io/cluster/${var.project_name}" = "shared"
     }
   )
@@ -124,8 +128,8 @@ resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
 
   route {
-    cidr_block      = "0.0.0.0/0"
-    gateway_id      = aws_internet_gateway.main.id
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.main.id
   }
 
   tags = merge(

@@ -76,6 +76,44 @@ resource "aws_iam_role" "argocd_capability" {
   )
 }
 
+# EKS validates the capability role's trust policy against IAM at creation time, and
+# IAM trust policy changes take a few seconds to propagate. Without a wait, CreateCapability
+# can fail with "trust policy is invalid" even though the policy content is correct -
+# it's racing IAM's own eventual consistency, not a config error. The trigger keys off
+# the policy content so any future trust policy change re-waits too, not just first create.
+resource "time_sleep" "ack_capability_role" {
+  count           = var.enable_ack_capability ? 1 : 0
+  create_duration = "20s"
+
+  triggers = {
+    assume_role_policy = aws_iam_role.ack_capability[0].assume_role_policy
+  }
+
+  depends_on = [aws_iam_role.ack_capability]
+}
+
+resource "time_sleep" "kro_capability_role" {
+  count           = var.enable_kro_capability ? 1 : 0
+  create_duration = "20s"
+
+  triggers = {
+    assume_role_policy = aws_iam_role.kro_capability[0].assume_role_policy
+  }
+
+  depends_on = [aws_iam_role.kro_capability]
+}
+
+resource "time_sleep" "argocd_capability_role" {
+  count           = var.enable_argocd_capability ? 1 : 0
+  create_duration = "20s"
+
+  triggers = {
+    assume_role_policy = aws_iam_role.argocd_capability[0].assume_role_policy
+  }
+
+  depends_on = [aws_iam_role.argocd_capability]
+}
+
 # Enable ACK Capability
 resource "aws_eks_capability" "ack" {
   count                     = var.enable_ack_capability ? 1 : 0
@@ -92,7 +130,7 @@ resource "aws_eks_capability" "ack" {
     }
   )
 
-  depends_on = [aws_eks_cluster.main]
+  depends_on = [aws_eks_cluster.main, time_sleep.ack_capability_role]
 }
 
 # Enable KRO Capability
@@ -111,7 +149,7 @@ resource "aws_eks_capability" "kro" {
     }
   )
 
-  depends_on = [aws_eks_cluster.main]
+  depends_on = [aws_eks_cluster.main, time_sleep.kro_capability_role]
 }
 
 # AWS supports exactly one IAM Identity Center instance per organization/account, so
@@ -168,7 +206,7 @@ resource "aws_eks_capability" "argocd" {
     }
   )
 
-  depends_on = [aws_eks_cluster.main]
+  depends_on = [aws_eks_cluster.main, time_sleep.argocd_capability_role]
 }
 
 # ACK capability needs to read Kubernetes secrets it doesn't own (e.g. DB passwords) -
