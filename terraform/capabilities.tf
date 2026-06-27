@@ -24,6 +24,63 @@ resource "aws_iam_role" "ack_capability" {
   )
 }
 
+# AWS resources ACK is allowed to manage from Kubernetes CRs, scoped per service.
+# IAMFullAccess and ec2:* (which covers VPC) are genuinely high blast-radius grants -
+# anyone with merge access to the GitOps repos can effectively create/escalate IAM
+# roles or modify VPC networking through an ACK custom resource. Requested explicitly;
+# narrow these to scoped custom policies later if that risk needs reducing.
+locals {
+  ack_managed_policy_arns = [
+    "arn:aws:iam::aws:policy/AmazonS3FullAccess",
+    "arn:aws:iam::aws:policy/AmazonRDSFullAccess",
+    "arn:aws:iam::aws:policy/AmazonSQSFullAccess",
+    "arn:aws:iam::aws:policy/AmazonSNSFullAccess",
+    "arn:aws:iam::aws:policy/AmazonEC2FullAccess", # also covers VPC - same API namespace
+    "arn:aws:iam::aws:policy/CloudWatchFullAccessV2", # CloudWatchFullAccess is deprecated
+    "arn:aws:iam::aws:policy/AWSLambda_FullAccess",
+    "arn:aws:iam::aws:policy/SecretsManagerReadWrite",
+    "arn:aws:iam::aws:policy/IAMFullAccess",
+  ]
+}
+
+resource "aws_iam_role_policy_attachment" "ack_managed" {
+  for_each   = var.enable_ack_capability ? toset(local.ack_managed_policy_arns) : []
+  role       = aws_iam_role.ack_capability[0].name
+  policy_arn = each.value
+}
+
+# No AWS managed policy fits the EKS controller - this is ACK's own recommended inline
+# policy for the eks.services.k8s.aws controller (config/iam/recommended-inline-policy
+# in aws-controllers-k8s/eks-controller), not a guess.
+resource "aws_iam_policy" "ack_eks" {
+  count       = var.enable_ack_capability ? 1 : 0
+  name        = "${var.cluster_name}-ack-eks-controller"
+  description = "ACK eks.services.k8s.aws controller's recommended inline policy - no AWS managed policy covers this"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "eks:*",
+          "iam:GetRole",
+          "iam:PassRole",
+          "iam:ListAttachedRolePolicies",
+          "ec2:DescribeSubnets"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ack_eks" {
+  count      = var.enable_ack_capability ? 1 : 0
+  policy_arn = aws_iam_policy.ack_eks[0].arn
+  role       = aws_iam_role.ack_capability[0].name
+}
+
 # KRO Capability IAM Role
 resource "aws_iam_role" "kro_capability" {
   count = var.enable_kro_capability ? 1 : 0
@@ -150,6 +207,22 @@ resource "aws_eks_capability" "kro" {
   )
 
   depends_on = [aws_eks_cluster.main, time_sleep.kro_capability_role]
+}
+
+# The auto-granted AmazonEKSKROPolicy only covers kro's own CRDs/ResourceGraphDefinitions -
+# it can read an RGD but not act on what it composes (e.g. create the ACK resources or
+# Deployments an RGD instantiates). This is what actually lets kro create things, cluster-wide.
+resource "aws_eks_access_policy_association" "kro_edit" {
+  count         = var.enable_kro_capability ? 1 : 0
+  cluster_name  = aws_eks_cluster.main.name
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy"
+  principal_arn = aws_iam_role.kro_capability[0].arn
+
+  access_scope {
+    type = "cluster"
+  }
+
+  depends_on = [aws_eks_capability.kro]
 }
 
 # AWS supports exactly one IAM Identity Center instance per organization/account, so
