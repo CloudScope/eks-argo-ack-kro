@@ -125,13 +125,12 @@ resource "aws_eks_node_group" "spot" {
   }
 }
 
-# Auto Scaling Group Tags for On-Demand nodes
+# Auto Scaling Group Tags. Each EKS managed node group always creates exactly one
+# ASG, exposed directly on the node group resource - no for_each needed (and a
+# for_each here would fail anyway: the ASG name is unknown until the node group is
+# created in this same apply, and for_each requires its keys to be known at plan time).
 resource "aws_autoscaling_group_tag" "on_demand_cluster" {
-  for_each = toset(
-    data.aws_autoscaling_groups.on_demand.names
-  )
-
-  autoscaling_group_name = each.value
+  autoscaling_group_name = aws_eks_node_group.on_demand.resources[0].autoscaling_groups[0].name
 
   tag {
     key                 = "k8s.io/cluster-autoscaler/${var.cluster_name}"
@@ -141,11 +140,7 @@ resource "aws_autoscaling_group_tag" "on_demand_cluster" {
 }
 
 resource "aws_autoscaling_group_tag" "on_demand_enabled" {
-  for_each = toset(
-    data.aws_autoscaling_groups.on_demand.names
-  )
-
-  autoscaling_group_name = each.value
+  autoscaling_group_name = aws_eks_node_group.on_demand.resources[0].autoscaling_groups[0].name
 
   tag {
     key                 = "k8s.io/cluster-autoscaler/enabled"
@@ -154,13 +149,8 @@ resource "aws_autoscaling_group_tag" "on_demand_enabled" {
   }
 }
 
-# Auto Scaling Group Tags for Spot nodes
 resource "aws_autoscaling_group_tag" "spot_cluster" {
-  for_each = toset(
-    data.aws_autoscaling_groups.spot.names
-  )
-
-  autoscaling_group_name = each.value
+  autoscaling_group_name = aws_eks_node_group.spot.resources[0].autoscaling_groups[0].name
 
   tag {
     key                 = "k8s.io/cluster-autoscaler/${var.cluster_name}"
@@ -170,30 +160,11 @@ resource "aws_autoscaling_group_tag" "spot_cluster" {
 }
 
 resource "aws_autoscaling_group_tag" "spot_enabled" {
-  for_each = toset(
-    data.aws_autoscaling_groups.spot.names
-  )
-
-  autoscaling_group_name = each.value
+  autoscaling_group_name = aws_eks_node_group.spot.resources[0].autoscaling_groups[0].name
 
   tag {
     key                 = "k8s.io/cluster-autoscaler/enabled"
     value               = "true"
     propagate_at_launch = false
-  }
-}
-
-# Data source to get ASG names
-data "aws_autoscaling_groups" "on_demand" {
-  filter {
-    name   = "tag:eks:nodegroup-name"
-    values = [aws_eks_node_group.on_demand.node_group_name]
-  }
-}
-
-data "aws_autoscaling_groups" "spot" {
-  filter {
-    name   = "tag:eks:nodegroup-name"
-    values = [aws_eks_node_group.spot.node_group_name]
   }
 }
