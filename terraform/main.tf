@@ -4,7 +4,8 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      # >= 6.25.0 required: aws_eks_capability was added in that release
+      version = ">= 6.25.0, < 7.0.0"
     }
   }
 }
