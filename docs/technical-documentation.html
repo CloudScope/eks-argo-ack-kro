@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>EKS GitOps Platform — Technical Documentation</title>
+<style>
+  @page { margin: 22mm 18mm; }
+  body {
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: #1c2530;
+    line-height: 1.5;
+    font-size: 10.5pt;
+  }
+  h1, h2, h3, h4 { color: #0b3d62; font-weight: 600; }
+  h1 { font-size: 19pt; border-bottom: 3px solid #0b3d62; padding-bottom: 6px; margin-top: 0; page-break-before: always; }
+  h1:first-of-type { page-break-before: avoid; }
+  h2 { font-size: 14pt; margin-top: 26px; border-bottom: 1px solid #c7d2dc; padding-bottom: 3px; }
+  h3 { font-size: 11.5pt; margin-top: 18px; color: #16415e; }
+  h4 { font-size: 10.5pt; margin-top: 12px; color: #2c5573; }
+  code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 9pt; }
+  pre {
+    background: #f4f6f8;
+    border: 1px solid #d9e0e6;
+    border-left: 3px solid #0b3d62;
+    border-radius: 4px;
+    padding: 10px 12px;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  code.inline { background: #eef1f4; padding: 1px 5px; border-radius: 3px; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0 16px; font-size: 9.3pt; }
+  th, td { border: 1px solid #d2dae1; padding: 5px 8px; text-align: left; vertical-align: top; }
+  th { background: #0b3d62; color: white; }
+  tr:nth-child(even) { background: #f6f8fa; }
+  .cover {
+    height: 92vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    page-break-after: always;
+  }
+  .cover h1 { border: none; font-size: 28pt; margin-bottom: 6px; page-break-before: avoid; }
+  .cover .subtitle { font-size: 15pt; color: #4a5b6a; margin-bottom: 40px; }
+  .cover .meta { font-size: 10.5pt; color: #5a6b7a; }
+  .cover .meta div { margin-bottom: 4px; }
+  .callout {
+    border-radius: 5px;
+    padding: 10px 14px;
+    margin: 12px 0;
+    font-size: 9.7pt;
+  }
+  .callout.warn { background: #fdf3e7; border-left: 4px solid #c97a1b; }
+  .callout.risk { background: #fdeceb; border-left: 4px solid #c0392b; }
+  .callout.note { background: #eaf2fb; border-left: 4px solid #2b6fb8; }
+  .toc { background: #f6f8fa; border: 1px solid #d9e0e6; border-radius: 6px; padding: 16px 22px; }
+  .toc ul { margin: 0; padding-left: 20px; }
+  .toc li { margin: 4px 0; }
+  .badge {
+    display: inline-block;
+    font-size: 8pt;
+    font-weight: 600;
+    padding: 1px 7px;
+    border-radius: 10px;
+    color: white;
+    margin-left: 6px;
+  }
+  .badge.tf { background: #5c4ee5; }
+  .badge.gitops { background: #2e9e6b; }
+  .badge.aws { background: #c97a1b; }
+  footer.page-footer { font-size: 8pt; color: #8a98a5; margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <h1>EKS GitOps Platform</h1>
+  <div class="subtitle">Amazon EKS with ArgoCD, AWS Controllers for Kubernetes (ACK), and Kube Resource Orchestrator (kro)</div>
+  <div class="meta">
+    <div><strong>Document type:</strong> Technical Implementation Guide</div>
+    <div><strong>Project:</strong> smart-infra-manager-eks</div>
+    <div><strong>Repository:</strong> github.com/CloudScope/eks-argo-ack-kro</div>
+    <div><strong>Region:</strong> ap-south-1</div>
+    <div><strong>Kubernetes version:</strong> 1.36</div>
+    <div><strong>Prepared by:</strong> Platform Engineering</div>
+    <div><strong>Date:</strong> 2026-06-28</div>
+  </div>
+</div>
+
+<div class="toc">
+<h2 style="margin-top:0;border:none;">Contents</h2>
+<ul>
+  <li>1. Executive Summary</li>
+  <li>2. Architecture Overview</li>
+  <li>3. Prerequisites</li>
+  <li>4. Infrastructure Components (Terraform)</li>
+  <li>5. Identity, Access &amp; RBAC</li>
+  <li>6. GitOps Configuration (ArgoCD)</li>
+  <li>7. External Secrets Operator</li>
+  <li>8. ACK &amp; kro Permission Model</li>
+  <li>9. CI/CD Pipeline</li>
+  <li>10. Step-by-Step Implementation Procedure</li>
+  <li>11. Troubleshooting &amp; Lessons Learned</li>
+  <li>12. Security Considerations &amp; Follow-ups</li>
+  <li>13. Appendix: File &amp; Variable Reference</li>
+</ul>
+</div>
+
+<h1>1. Executive Summary</h1>
+<p>
+This document describes the design and build-out of a production EKS platform that uses three native
+<strong>Amazon EKS Capabilities</strong> — ArgoCD, AWS Controllers for Kubernetes (ACK), and Kube Resource
+Orchestrator (kro) — to move AWS resource provisioning out of Terraform and into a Git-reviewed,
+continuously-reconciled GitOps workflow.
+</p>
+<p>
+The platform follows a deliberate two-layer ownership model:
+</p>
+<ul>
+  <li><strong>Terraform owns the bootstrap/platform layer</strong>: VPC consumption, the EKS cluster, node groups,
+  the three capabilities themselves and their IAM roles, Pod Identity wiring, and the GitOps bootstrap
+  (root <code class="inline">Application</code> resources and Git credentials).</li>
+  <li><strong>ArgoCD + ACK + kro own the application layer</strong>: AWS resources individual workloads need
+  (S3 buckets, databases, queues, IAM roles, etc.) and higher-level composed templates (kro
+  <code class="inline">ResourceGraphDefinition</code>s), declared as YAML in Git and reconciled continuously.</li>
+</ul>
+<p>
+This split exists because GitOps tooling cannot manage the infrastructure it itself runs on — the cluster has to
+exist before ArgoCD can run on it, so cluster lifecycle stays in Terraform.
+</p>
+
+<h1>2. Architecture Overview</h1>
+<pre>
+                         ┌─────────────────────────────────────────┐
+                         │           Existing VPC (10.0.0.0/16)     │
+                         │   3 public subnets   |   3 private subnets│
+                         └───────────────┬───────────────────────────┘
+                                         │
+                         ┌───────────────▼───────────────────────────┐
+                         │        Amazon EKS Cluster (v1.36)         │
+                         │  access_config: API_AND_CONFIG_MAP        │
+                         │  control-plane logging: api/audit/auth/   │
+                         │                  controllerManager/sched  │
+                         └───────┬───────────────────┬────────────────┘
+                                 │                   │
+                ┌────────────────▼───────┐  ┌─────────▼─────────────────┐
+                │  Managed Node Groups    │  │   EKS Capabilities         │
+                │  (Graviton / arm64)     │  │  (AWS service-owned acct)  │
+                │  • 2x on-demand         │  │  • ACK   (AWS resources)   │
+                │  • 3x spot              │  │  • kro   (composition)     │
+                │  Launch template w/     │  │  • ArgoCD (GitOps engine)  │
+                │  custom node SG         │  └─────────┬──────────────────┘
+                └─────────────────────────┘            │
+                                                        │ syncs from
+                                          ┌─────────────▼─────────────────┐
+                                          │   Git (2 independent Apps)     │
+                                          │  • argo-app-of-apps             │
+                                          │  • cloudscope-argocd-self-managed│
+                                          │  Both private; credentials via  │
+                                          │  AWS Secrets Manager            │
+                                          └──────────────────────────────────┘
+</pre>
+
+<table>
+<tr><th>Layer</th><th>Owns</th><th>Managed by</th></tr>
+<tr><td>Network</td><td>VPC, subnets, NAT, route tables</td><td>Terraform <span class="badge tf">terraform/main.tf</span> (pre-existing, referenced)</td></tr>
+<tr><td>Cluster</td><td>EKS control plane, node groups, add-ons</td><td>Terraform <span class="badge tf">eks_cluster.tf, node_groups.tf</span></td></tr>
+<tr><td>Capabilities</td><td>ACK, kro, ArgoCD capability resources + IAM</td><td>Terraform <span class="badge tf">capabilities.tf</span></td></tr>
+<tr><td>GitOps bootstrap</td><td>Root Applications, repo creds, cluster registration</td><td>Terraform <span class="badge tf">argocd_apps.tf</span></td></tr>
+<tr><td>Application resources</td><td>S3/RDS/SQS/IAM objects, kro templates</td><td>GitOps <span class="badge gitops">Git repos</span></td></tr>
+<tr><td>Secrets</td><td>GitHub PAT, app secrets</td><td>AWS <span class="badge aws">Secrets Manager</span> (never in TF state)</td></tr>
+</table>
+
+<h1>3. Prerequisites</h1>
+<ul>
+  <li>AWS account with an existing VPC (3 public + 3 private subnets across 3 AZs)</li>
+  <li>Terraform &gt;= 1.0 (pinned to 1.14.6 in CI), AWS provider &gt;= 6.25.0 (required for the native
+  <code class="inline">aws_eks_capability</code> resource, introduced in that release)</li>
+  <li>AWS CLI v2 available wherever <code class="inline">terraform apply</code> runs (used by the Kubernetes
+  provider's <code class="inline">exec</code> auth plugin)</li>
+  <li>AWS IAM Identity Center already enabled for the organization (exactly one instance is supported per org;
+  Terraform resolves it automatically)</li>
+  <li>A GitHub Personal Access Token with read access to every private repo ArgoCD will sync from, stored directly
+  in AWS Secrets Manager (never in Terraform state or tfvars)</li>
+  <li>GitHub Actions configured with an OIDC-federated IAM role for <code class="inline">terraform plan</code>/<code class="inline">apply</code></li>
+</ul>
+
+<h1>4. Infrastructure Components (Terraform)</h1>
+
+<h2>4.1 EKS Cluster</h2>
+<pre>resource "aws_eks_cluster" "main" {
+  name     = var.cluster_name
+  version  = var.cluster_version          # 1.36
+  role_arn = aws_iam_role.cluster.arn
+
+  access_config {
+    authentication_mode = "API_AND_CONFIG_MAP"   # required for EKS Access Entries
+  }
+
+  vpc_config {
+    subnet_ids              = local.all_subnet_ids   # public + private
+    endpoint_private_access = true
+    endpoint_public_access  = true
+  }
+
+  enabled_cluster_log_types = ["api","audit","authenticator","controllerManager","scheduler"]
+}</pre>
+<div class="callout note">
+<strong>Why API_AND_CONFIG_MAP:</strong> EKS Access Entries (used throughout this platform for capability and
+GitOps-principal authorization) require API or API_AND_CONFIG_MAP authentication mode. CONFIG_MAP-only clusters
+cannot use Access Entries at all.
+</div>
+
+<h2>4.2 Node Groups — Graviton, Fixed-Size, Mixed Capacity</h2>
+<table>
+<tr><th>Group</th><th>Capacity type</th><th>Size</th><th>Instance types</th><th>AMI type</th></tr>
+<tr><td>on_demand</td><td>ON_DEMAND</td><td>min=max=desired=2</td><td>t4g.large, m6g.large</td><td>AL2023_ARM_64_STANDARD</td></tr>
+<tr><td>spot</td><td>SPOT</td><td>min=max=desired=3</td><td>t4g.large, m6g.large</td><td>AL2023_ARM_64_STANDARD</td></tr>
+</table>
+<p>
+Both groups share a single <code class="inline">aws_launch_template</code> that attaches a custom node security
+group and a 50&nbsp;GiB gp3 root volume — <code class="inline">aws_eks_node_group</code> has no
+<code class="inline">vpc_config</code>/security-group argument of its own, so a launch template is the only way
+to apply a custom SG to managed node group instances.
+</p>
+<div class="callout note">
+<strong>Why Graviton:</strong> up to ~40% better price/performance than equivalent x86_64 instances per AWS's own
+benchmarks. Both node groups must stay single-architecture — EKS node groups cannot mix arm64 and x86_64
+instance types in one group.
+</div>
+<div class="callout note">
+<strong>Why fixed min=max=desired:</strong> "2 dedicated + 3 spot" was a hard capacity requirement (5 nodes
+total), not an autoscaling target — there is no scale-out path for these groups by design.
+</div>
+
+<h2>4.3 Security Groups</h2>
+<p>
+Cluster and node security groups reference each other's IDs bidirectionally (cluster needs ingress from node SG;
+node needs ingress from cluster SG). All rules are managed as standalone
+<code class="inline">aws_vpc_security_group_ingress_rule</code> / <code class="inline">_egress_rule</code>
+resources rather than inline <code class="inline">ingress</code>/<code class="inline">egress</code> blocks on
+<code class="inline">aws_security_group</code>.
+</p>
+<div class="callout warn">
+<strong>Why standalone rule resources, not inline blocks:</strong> two security groups that inline-reference each
+other's IDs create a dependency cycle Terraform cannot resolve. Standalone rule resources can reference both
+group IDs without the groups themselves depending on each other. Mixing inline blocks and standalone rules on the
+same group is also explicitly discouraged by AWS — it causes perpetual diffs as each method fights to "own" the
+rule set.
+</div>
+
+<h2>4.4 IAM Roles</h2>
+<table>
+<tr><th>Role</th><th>Trust principal</th><th>Purpose</th></tr>
+<tr><td>cluster</td><td>eks.amazonaws.com</td><td>EKS control plane</td></tr>
+<tr><td>node</td><td>ec2.amazonaws.com</td><td>Worker node instances</td></tr>
+<tr><td>vpc_cni</td><td>pods.eks.amazonaws.com</td><td>VPC CNI via Pod Identity (not IRSA)</td></tr>
+<tr><td>external_secrets</td><td>pods.eks.amazonaws.com</td><td>External Secrets Operator via Pod Identity</td></tr>
+<tr><td>ack_capability</td><td>capabilities.eks.amazonaws.com</td><td>What the ACK controller calls AWS APIs as —
+the identity actually behind every <code class="inline">iam.services.k8s.aws</code>/<code class="inline">s3...</code>/etc.
+custom resource it provisions (detail: §8.1, §8.3)</td></tr>
+<tr><td>kro_capability</td><td>capabilities.eks.amazonaws.com</td><td>Authenticates kro to AWS, but kro's actual
+work is Kubernetes-API orchestration, not AWS API calls — see §8.2 for why this role needs almost no AWS IAM
+permissions at all, unlike the other two</td></tr>
+<tr><td>argocd_capability</td><td>capabilities.eks.amazonaws.com</td><td>ArgoCD EKS Capability</td></tr>
+</table>
+<div class="callout note">
+<strong>Don't conflate these capability roles with IAM resources ACK creates.</strong> These three rows are
+credentials the platform's controllers use to call AWS; they are unrelated to whatever IAM Roles/Policies an ACK
+custom resource declared in Git ends up provisioning as a side effect. §8.3 and §8.4 walk through the distinction
+and how the two interact.
+</div>
+<div class="callout risk">
+<strong>Trust policy requirement specific to capability roles:</strong> EKS validates that a capability role's
+trust policy includes <em>both</em> <code class="inline">sts:AssumeRole</code> <em>and</em>
+<code class="inline">sts:TagSession</code>, granted to <code class="inline">capabilities.eks.amazonaws.com</code> —
+not the generic <code class="inline">eks.amazonaws.com</code> principal used by the cluster role. Using the wrong
+principal produces <code class="inline">CreateCapability</code> 400 errors with no other indication of the cause.
+</div>
+<div class="callout warn">
+<strong>IAM propagation delay:</strong> immediately after creating/updating a capability role's trust policy,
+<code class="inline">CreateCapability</code> can fail with "trust policy is invalid" even though the policy
+content is correct — it is racing IAM's own eventual consistency. A <code class="inline">time_sleep</code>
+resource (20s, keyed off the trust policy content so future edits re-wait) sits between each capability role and
+its capability resource.
+</div>
+
+<h2>4.5 EKS Add-ons</h2>
+<table>
+<tr><th>Add-on</th><th>Notes</th></tr>
+<tr><td>vpc-cni</td><td>Pod Identity association to <code class="inline">kube-system/aws-node</code>, not IRSA</td></tr>
+<tr><td>coredns</td><td>standard</td></tr>
+<tr><td>kube-proxy</td><td>standard</td></tr>
+<tr><td>eks-pod-identity-agent</td><td>required infrastructure — without this addon, no Pod Identity association
+of any kind functions, for any workload</td></tr>
+</table>
+<div class="callout note">
+<strong><code class="inline">resolve_conflicts</code> is not a real argument</strong> on
+<code class="inline">aws_eks_addon</code> — the correct arguments are
+<code class="inline">resolve_conflicts_on_create</code> and <code class="inline">resolve_conflicts_on_update</code>.
+</div>
+
+<h2>4.6 EKS Capabilities</h2>
+<p>
+EKS Capabilities are AWS's fully-managed alternative to self-hosting ACK, kro, or ArgoCD via Helm. AWS runs the
+controller in a service-owned account, not as pods inside the customer's cluster — eliminating install, upgrade,
+and scaling overhead for these three tools entirely.
+</p>
+<pre>resource "aws_eks_capability" "ack" {
+  cluster_name              = aws_eks_cluster.main.name
+  capability_name           = "ack"
+  type                      = "ACK"
+  role_arn                  = aws_iam_role.ack_capability[0].arn
+  delete_propagation_policy = "RETAIN"
+  depends_on                = [aws_eks_cluster.main, time_sleep.ack_capability_role]
+}</pre>
+<p>Required arguments often missed: <code class="inline">type</code> (ACK | KRO | ARGOCD) and
+<code class="inline">delete_propagation_policy</code> (currently only <code class="inline">RETAIN</code> is valid).</p>
+
+<h1>5. Identity, Access &amp; RBAC</h1>
+
+<h2>5.1 Pod Identity, Not IRSA</h2>
+<p>
+Every workload-facing IAM role in this platform (VPC CNI, External Secrets Operator) uses
+<strong>EKS Pod Identity</strong> — trust policy to <code class="inline">pods.eks.amazonaws.com</code> plus an
+<code class="inline">aws_eks_pod_identity_association</code> binding a namespace/service-account pair to the role.
+This is a deliberate, consistent choice over the older IRSA (IAM Roles for Service Accounts / OIDC federation)
+pattern: Pod Identity needs no OIDC provider plumbing and is reusable across clusters.
+</p>
+
+<h2>5.2 IAM Identity Center Integration (ArgoCD SSO)</h2>
+<pre>data "aws_ssoadmin_instances" "this" {}     # exactly one per org; resolved automatically
+
+resource "aws_identitystore_group" "argocd_admin" {
+  identity_store_id = tolist(data.aws_ssoadmin_instances.this[0].identity_store_ids)[0]
+  display_name      = "ARGOCD_ADMIN"
+}
+
+# Inside the ArgoCD capability's configuration.argo_cd block:
+aws_idc { idc_instance_arn = tolist(data.aws_ssoadmin_instances.this[0].arns)[0] }
+rbac_role_mapping {
+  role     = "ADMIN"
+  identity { id = aws_identitystore_group.argocd_admin[0].group_id; type = "SSO_GROUP" }
+}</pre>
+<p>
+Terraform creates the <code class="inline">ARGOCD_ADMIN</code> Identity Center group and maps it to ArgoCD's
+built-in <code class="inline">ADMIN</code> role. <strong>Group membership is not Terraform-managed</strong> —
+add/remove individual users via the Identity Center console as personnel changes, without touching
+infrastructure code.
+</p>
+<div class="callout note">
+<strong>Public by design:</strong> the ArgoCD capability's server endpoint is reachable over the public internet
+by default. The field that would restrict it to VPC-only access via PrivateLink
+(<code class="inline">network_access.vpce_ids</code>) is deliberately left unset; access is gated entirely by
+Identity Center SSO instead.
+</div>
+
+<h2>5.3 EKS Access Entries — the Subtle Parts</h2>
+<p>
+When a capability is created, EKS <em>automatically</em> creates an EKS Access Entry for its IAM role on that
+cluster — but grants it <strong>zero Kubernetes RBAC by default</strong> (least privilege). Three real issues were
+found and fixed while wiring this up:
+</p>
+<h3>5.3.1 Don't create a duplicate access entry</h3>
+<p>
+Writing an explicit <code class="inline">aws_eks_access_entry</code> for a capability role that EKS already
+auto-provisioned produces <code class="inline">ResourceInUseException</code> on create. Two valid resolutions:
+</p>
+<ul>
+  <li><strong>Import</strong> the existing entry: <code class="inline">terraform import 'aws_eks_access_entry.x[0]' cluster_name:role_arn</code></li>
+  <li><strong>Delete and recreate</strong>: <code class="inline">aws eks delete-access-entry ...</code> then
+  <code class="inline">terraform apply</code> — acceptable since access entries hold no data, only a brief auth
+  gap for that principal between delete and the next apply.</li>
+</ul>
+<h3>5.3.2 The "eks-access-entry:&lt;arn&gt;" group is not automatic</h3>
+<p>
+AWS documentation describes a group naming convention, <code class="inline">eks-access-entry:&lt;principal-arn&gt;</code>,
+that reads as if every access entry automatically belongs to such a group. It does not — that string is only
+meaningful if you <em>explicitly</em> set <code class="inline">kubernetes_groups</code> on the access entry to
+that value (or any value of your choosing). An auto-created entry has an empty group list until you set one.
+</p>
+<h3>5.3.3 <code class="inline">subject.namespace</code> on a Group/User RBAC subject can invalidate the whole binding</h3>
+<div class="callout risk">
+This was the root cause of a multi-hour debugging cycle. A <code class="inline">kubernetes_cluster_role_binding_v1</code>
+subject block left <code class="inline">namespace</code> unset; the Terraform provider defaulted it to
+<code class="inline">"default"</code>. Per the Kubernetes API spec for <code class="inline">rbac.authorization.k8s.io/v1.Subject</code>:
+<em>"Namespace of the referenced object... If the object kind is non-namespace, such as User or Group, and this
+value is not empty the Authorizer should report an error."</em> The symptom was uniform "forbidden" errors across
+every resource type and API group, regardless of how broad the bound ClusterRole's rules were — because the
+binding itself was invalid, not under-scoped. Fix: explicitly set <code class="inline">namespace = ""</code> on
+any Group/User subject.
+</div>
+
+<h3>5.3.4 Two valid mechanisms — know which one you're using</h3>
+<table>
+<tr><th>Mechanism</th><th>Depends on Kubernetes groups?</th><th>Used for</th></tr>
+<tr><td><code class="inline">aws_eks_access_policy_association</code> (AWS-managed policy, e.g. AmazonEKSEditPolicy)</td>
+<td>No — applies directly to the principal ARN</td><td>kro's elevated permissions; ArgoCD's namespace-scoped write</td></tr>
+<tr><td>Custom <code class="inline">kubernetes_cluster_role_v1</code> + <code class="inline">_binding_v1</code></td>
+<td>Yes — requires the access entry's <code class="inline">kubernetes_groups</code> to be set correctly</td>
+<td>ArgoCD's cluster-wide read (no AWS-managed policy grants true wildcard <code class="inline">*</code>/<code class="inline">*</code> view)</td></tr>
+</table>
+<p>
+Where possible, prefer access policy associations — they have no group-binding failure mode at all.
+</p>
+
+<h1>6. GitOps Configuration (ArgoCD)</h1>
+
+<h2>6.1 Self-Management — Two Independent Applications</h2>
+<p>
+The platform deliberately registers <strong>two separate, independent</strong> <code class="inline">Application</code>
+resources rather than nesting one inside the other:
+</p>
+<table>
+<tr><th>Application</th><th>Source repo</th><th>Destination</th></tr>
+<tr><td>app-of-apps</td><td>github.com/CloudScope/argo-app-of-apps</td><td>name=local-cluster, ns=argocd</td></tr>
+<tr><td>argocd-self-managed</td><td>github.com/CloudScope/cloudscope-argocd-self-managed</td><td>name=local-cluster, ns=argocd</td></tr>
+</table>
+<div class="callout risk">
+<strong>The destination <code class="inline">server</code> field must be the EKS cluster ARN, never the vanilla
+<code class="inline">https://kubernetes.default.svc</code></strong> that almost every ArgoCD example online uses.
+Per AWS's documentation for this capability: <em>"The default kubernetes.default.svc is not supported."</em>
+Using it would have silently prevented every Application from ever syncing, with or without a registered cluster.
+The destination is referenced by registered <code class="inline">name</code> (<code class="inline">local-cluster</code>)
+instead, which is also more stable than hardcoding an ARN twice.
+</div>
+
+<h2>6.2 Cluster Registration</h2>
+<p>
+The ArgoCD capability does <strong>not</strong> auto-register the cluster it runs on — at least one cluster must
+be explicitly registered before any Application can sync.
+</p>
+<pre>resource "kubernetes_secret_v1" "argocd_local_cluster" {
+  metadata {
+    name      = "local-cluster"
+    namespace = "argocd"
+    labels    = { "argocd.argoproj.io/secret-type" = "cluster" }
+  }
+  data = {
+    name    = "local-cluster"
+    server  = aws_eks_cluster.main.arn        # ARN, not a URL
+    project = "default"
+  }
+}</pre>
+<div class="callout note">
+This secret holds <strong>no live credentials</strong> — just a name, the cluster ARN, and a project. Actual
+authorization flows through the IAM access entry the capability already has. That is what makes it safe to manage
+declaratively in Terraform, unlike the repository credentials below.
+</div>
+
+<h2>6.3 Private Repository Access</h2>
+<p>
+Both Git repositories are private and live under the same GitHub organization. Credentials are sourced from AWS
+Secrets Manager and applied via a single <strong>repo-creds template</strong> (org-wide), not a per-repository
+secret — any future repository under <code class="inline">github.com/CloudScope</code> is automatically covered
+with zero further Terraform changes.
+</p>
+<pre># Created once, by hand, outside Terraform — never in state, tfvars, or CI secrets:
+aws secretsmanager put-secret-value \
+  --secret-id "GIT_HUB_PAT" \
+  --secret-string '{"username":"&lt;github-username&gt;","token":"&lt;github-pat&gt;"}'</pre>
+<pre>data "aws_secretsmanager_secret" "argocd_repo" {
+  name = "GIT_HUB_PAT"
+}
+
+resource "kubernetes_secret_v1" "argocd_github_org_creds" {
+  metadata {
+    name      = "cloudscope-org-repo-creds"
+    namespace = "argocd"
+    labels    = { "argocd.argoproj.io/secret-type" = "repo-creds" }   # template, not "repository"
+  }
+  data = {
+    type      = "git"
+    url       = "https://github.com/CloudScope"                      # prefix match
+    secretArn = data.aws_secretsmanager_secret.argocd_repo[0].arn     # ARN only — not the credential itself
+  }
+}</pre>
+<div class="callout risk">
+<strong>The Secrets Manager JSON keys must be exactly <code class="inline">username</code> and
+<code class="inline">token</code></strong> — this is the ArgoCD capability's own hardcoded parsing of the secret
+payload, not a Terraform or configuration choice. Any other key naming produces silent authentication failures
+that surface as <code class="inline">revision main must be resolved</code>, not as an obvious "bad credentials"
+error.
+</div>
+<p>
+The IAM policy granting the ArgoCD capability role read access to this one secret is scoped to the exact secret
+ARN (<code class="inline">secretsmanager:GetSecretValue</code>, <code class="inline">DescribeSecret</code>) — not
+a blanket Secrets Manager grant.
+</p>
+<div class="callout note">
+<strong>UI note:</strong> ArgoCD's Settings → Repositories page only lists explicit
+<code class="inline">repository</code>-type secrets, never <code class="inline">repo-creds</code> templates — so
+it will show "No repositories connected" even though syncing works correctly. This is cosmetic, confirmed against
+upstream ArgoCD documentation, and was a deliberate trade-off in favor of the org-wide template over per-repo
+visibility.
+</div>
+
+<h1>7. External Secrets Operator</h1>
+<p>
+Terraform provisions only the <strong>prerequisites</strong> — the IAM role, a scoped Secrets Manager read policy,
+and the Pod Identity association — matching the External Secrets Helm chart's default namespace/ServiceAccount
+(<code class="inline">external-secrets</code>/<code class="inline">external-secrets</code>). The operator itself,
+and any <code class="inline">ClusterSecretStore</code>/<code class="inline">ExternalSecret</code> manifests, are
+deployed via the GitOps repos, not Terraform.
+</p>
+<pre>locals {
+  external_secrets_secret_arns = length(var.external_secrets_secret_arns) > 0 ? var.external_secrets_secret_arns : [
+    "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.cluster_name}-*"
+  ]
+}</pre>
+<p>
+Defaults to a naming-convention prefix (<code class="inline">&lt;cluster_name&gt;-*</code>) requiring zero
+additional input; override with exact ARNs once real secret names are known, for tighter scoping. The action list
+(<code class="inline">GetSecretValue</code>, <code class="inline">DescribeSecret</code>,
+<code class="inline">ListSecretVersionIds</code>, <code class="inline">BatchGetSecretValue</code>,
+<code class="inline">GetResourcePolicy</code>) was taken directly from ESO's own documented AWS Secrets Manager
+provider requirements. <code class="inline">secretsmanager:ListSecrets</code> is granted separately with
+<code class="inline">Resource = "*"</code> because IAM does not support resource-level scoping for that
+particular action at all.
+</p>
+
+<h1>8. ACK &amp; kro Permission Model</h1>
+
+<h2>8.1 ACK — AWS IAM Permissions</h2>
+<p>
+ACK's capability role starts with <strong>zero</strong> AWS IAM permissions — it cannot create any AWS resource
+until explicitly granted. Current scope:
+</p>
+<table>
+<tr><th>Service</th><th>Policy</th></tr>
+<tr><td>S3</td><td>AmazonS3FullAccess</td></tr>
+<tr><td>RDS</td><td>AmazonRDSFullAccess</td></tr>
+<tr><td>SQS</td><td>AmazonSQSFullAccess</td></tr>
+<tr><td>SNS</td><td>AmazonSNSFullAccess</td></tr>
+<tr><td>EC2 / VPC</td><td>AmazonEC2FullAccess</td></tr>
+<tr><td>CloudWatch</td><td>CloudWatchFullAccessV2 (CloudWatchFullAccess is deprecated)</td></tr>
+<tr><td>Lambda</td><td>AWSLambda_FullAccess</td></tr>
+<tr><td>Secrets Manager</td><td>SecretsManagerReadWrite</td></tr>
+<tr><td>IAM</td><td>IAMFullAccess</td></tr>
+<tr><td>EKS</td><td>Custom policy (no managed policy exists) — taken verbatim from ACK's own published
+<code class="inline">config/iam/recommended-inline-policy</code> for the <code class="inline">eks-controller</code>:
+<code class="inline">eks:*, iam:GetRole, iam:PassRole, iam:ListAttachedRolePolicies, ec2:DescribeSubnets</code></td></tr>
+</table>
+<div class="callout risk">
+<strong>Blast radius:</strong> <code class="inline">IAMFullAccess</code> and EC2/VPC full access give the ACK
+controller effectively IAM-admin-equivalent reach, account-wide, through any custom resource merged into either
+GitOps repository. This was an explicit, requested scope — not a default — and is the single highest-value target
+for tightening if/when the actual set of managed services narrows.
+</div>
+
+<h2>8.2 kro — Kubernetes RBAC, Not AWS IAM</h2>
+<p>
+kro itself needs essentially no AWS IAM permissions — its job is orchestrating Kubernetes custom resources, not
+calling AWS APIs directly. What it needs is <strong>Kubernetes RBAC broad enough to act on whatever resource kinds
+any <code class="inline">ResourceGraphDefinition</code> references.</strong>
+</p>
+<table>
+<tr><th>Grant</th><th>Why it wasn't enough</th></tr>
+<tr><td>Auto-granted <code class="inline">AmazonEKSKROPolicy</code></td><td>Covers only kro's own
+<code class="inline">kro.run</code> CRDs/RGDs — not the resources an RGD composes</td></tr>
+<tr><td><code class="inline">AmazonEKSEditPolicy</code> (added first)</td><td>A fixed, AWS-enumerated list of API
+groups (apps, batch, networking.k8s.io, core resources, ...) — never included ACK's custom resource groups
+(<code class="inline">iam.services.k8s.aws</code>, <code class="inline">s3.services.k8s.aws</code>, etc.) at all</td></tr>
+<tr><td><code class="inline">AmazonEKSClusterAdminPolicy</code> (current)</td><td>Full <code class="inline">*</code>/<code class="inline">*</code>/<code class="inline">*</code> —
+unblocks every current and future ACK CRD kind an RGD might reference</td></tr>
+</table>
+<div class="callout warn">
+<strong>Pattern recognized twice in this build:</strong> patching Kubernetes RBAC permission-by-permission,
+resource-kind-by-resource-kind, does not converge — there is always another CRD kind a new RGD or Application
+will reference next. Both times (ArgoCD's read access, kro's write access) the fix was a single blanket grant
+rather than incremental ones. <code class="inline">aws_eks_access_policy_association</code> is the lower-risk way
+to do this where an AWS-managed policy fits, since it applies directly to the principal with no Kubernetes
+group/binding mechanism in the loop at all.
+</div>
+
+<h2>8.3 Two Different Things Both Called "IAM" Here — Don't Conflate Them</h2>
+<p>
+This platform involves IAM in two unrelated senses, and the permission model only makes sense once they're kept
+separate:
+</p>
+<table>
+<tr><th>&nbsp;</th><th>What it is</th><th>Example in this platform</th></tr>
+<tr><td><strong>IAM roles <em>this platform uses</em></strong></td>
+<td>Credentials the EKS Capabilities (and other controllers) authenticate to AWS with — i.e. <em>who is calling
+AWS APIs</em></td>
+<td><code class="inline">ack_capability</code>, <code class="inline">kro_capability</code>,
+<code class="inline">argocd_capability</code> roles (§4.4)</td></tr>
+<tr><td><strong>IAM resources <em>ACK provisions</em></strong></td>
+<td>Real AWS IAM Roles/Policies that exist because someone declared an
+<code class="inline">iam.services.k8s.aws/Role</code> or <code class="inline">/Policy</code> custom resource in
+Git — i.e. <em>what gets created as a side effect</em></td>
+<td>e.g. an application's own IAM role for Pod Identity, provisioned declaratively instead of by hand</td></tr>
+</table>
+<p>
+The <code class="inline">IAMFullAccess</code> policy in §8.1 belongs entirely to the first category — it is what
+lets the <code class="inline">ack_capability</code> role's controller <em>call</em> IAM's
+<code class="inline">CreateRole</code>/<code class="inline">CreatePolicy</code>/etc. APIs on behalf of whatever
+<code class="inline">iam.services.k8s.aws</code> custom resources show up in either GitOps repo. It has nothing to
+do with the permissions of the roles ACK ends up creating — those are whatever the custom resource's own spec
+declares.
+</p>
+
+<h2>8.4 How kro, ACK, and AWS IAM Actually Relate</h2>
+<p>
+A concrete walk-through — kro composing an IAM role (the platform's <code class="inline">iamrolewithsecret-rgd.yaml</code>
+pattern) for an application that needs to read a secret:
+</p>
+<pre>
+1. A developer creates an INSTANCE of an existing ResourceGraphDefinition in Git
+   (e.g. "give my app an IAM role that can read secret X").
+        │
+        ▼
+2. ArgoCD syncs it - the instance is just a small Kubernetes custom resource.
+   (ArgoCD's own RBAC, §5, is what lets it write this object to the cluster.)
+        │
+        ▼
+3. kro reads the RGD + instance and expands it into the underlying resources the
+   RGD's "resources" list declares - here, an ACK "iam.services.k8s.aws/Role" object
+   (and usually a matching "/Policy" and an eks_pod_identity_association elsewhere).
+   kro is only creating KUBERNETES OBJECTS at this point - no AWS API call has
+   happened yet. This is why kro itself needs no AWS IAM permissions (§8.2) - it
+   only needs Kubernetes RBAC broad enough to create those custom resource objects.
+        │
+        ▼
+4. The ACK capability's IAM controller is watching iam.services.k8s.aws resources
+   cluster-wide. It notices the new Role object and calls the REAL AWS IAM API
+   (iam:CreateRole) to make it actually exist - authenticating as the
+   ack_capability role, using the IAMFullAccess policy from §8.1.
+        │
+        ▼
+5. ACK writes the real role's ARN/status back onto the Kubernetes object, which
+   kro and any dependent resources in the same RGD (e.g. a Pod Identity
+   association referencing that role) can then read.
+</pre>
+<div class="callout note">
+<strong>The takeaway:</strong> kro's permissions control whether the <em>Kubernetes representation</em> of a
+resource can be created; ACK's permissions control whether the <em>real AWS resource</em> behind it can be
+created. They are two separate authorization checks in the same pipeline, against two different APIs (the
+Kubernetes API server, and the AWS IAM API), using two different IAM roles. Granting kro more Kubernetes RBAC does
+nothing for ACK's AWS-side permissions, and vice versa — both had to be fixed independently in this build (§8.1,
+§8.2), and a gap in either one stops the same end-to-end flow.
+</div>
+<div class="callout risk">
+<strong>Why this makes <code class="inline">ack_capability</code>'s <code class="inline">IAMFullAccess</code> the
+platform's single biggest privilege concentration:</strong> any RGD or Application merged into either GitOps repo
+that declares an <code class="inline">iam.services.k8s.aws</code> resource is, transitively, exercising
+<code class="inline">IAMFullAccess</code> on the real AWS account. kro's broad Kubernetes RBAC (§8.2) is what lets
+that declaration reach ACK's controller in the first place. Tightening either side alone is not enough — both the
+Kubernetes-side reach (kro) and the AWS-side reach (ACK) would need narrowing together to meaningfully reduce this
+blast radius (see §12).
+</div>
+
+<h1>9. CI/CD Pipeline</h1>
+<p>GitHub Actions (<code class="inline">.github/workflows/terraform-deploy.yml</code>):</p>
+<table>
+<tr><th>Trigger</th><th>Action</th></tr>
+<tr><td>Pull request</td><td><code class="inline">fmt -check</code>, <code class="inline">init</code>,
+<code class="inline">validate</code>, <code class="inline">plan</code>, plan posted as a PR comment</td></tr>
+<tr><td>Push to main/master</td><td>All of the above, plus <code class="inline">apply -auto-approve</code> against
+the saved plan, then <code class="inline">terraform output -json</code> uploaded as a build artifact</td></tr>
+</table>
+<div class="callout note">
+<strong>Secrets handling:</strong> <code class="inline">terraform.tfvars</code> is gitignored and therefore
+never reaches CI. Any variable that must be supplied to GitHub Actions specifically is wired as
+<code class="inline">TF_VAR_*</code> at the job level, sourced from GitHub Actions secrets — never committed,
+never duplicated into the Terraform-managed Secrets Manager flow.
+</div>
+<div class="callout warn">
+<strong>Authentication consistency matters:</strong> EKS automatically grants the IAM principal that created the
+cluster implicit admin-equivalent Kubernetes access. Resources using the <code class="inline">kubernetes</code>
+provider (the ArgoCD <code class="inline">Application</code>/RBAC objects) depend on this holding true — i.e. the
+same GitHub Actions role must be the one that has run every apply against this cluster. A different applying
+principal will need an explicit <code class="inline">aws_eks_access_entry</code> of its own first.
+</div>
+
+<h1>10. Step-by-Step Implementation Procedure</h1>
+<ol>
+<li><strong>Confirm prerequisites</strong> — existing VPC, IAM Identity Center enabled, GitHub org with the two
+target repos created (with at least one commit / a <code class="inline">main</code> branch), AWS provider pinned
+&gt;= 6.25.0.</li>
+<li><strong>Create the GitHub PAT</strong> with read access scoped to every current and future repo it needs
+(an org-wide fine-grained token avoids the per-repo access gotcha documented in §11).</li>
+<li><strong>Store the PAT in Secrets Manager</strong> as <code class="inline">GIT_HUB_PAT</code> with JSON keys
+exactly <code class="inline">username</code>/<code class="inline">token</code> — before the first apply that
+references it.</li>
+<li><strong>Apply the network/cluster/node-group layer</strong> (<code class="inline">main.tf</code>,
+<code class="inline">iam.tf</code>, <code class="inline">security_groups.tf</code>,
+<code class="inline">eks_cluster.tf</code>, <code class="inline">node_groups.tf</code>) to bring up the EKS
+cluster and Graviton node groups.</li>
+<li><strong>Apply the capabilities layer</strong> (<code class="inline">capabilities.tf</code>) — ACK, kro, and
+ArgoCD capability resources, their IAM roles and trust policies, and the <code class="inline">time_sleep</code>
+guards for IAM propagation.</li>
+<li><strong>Apply the GitOps bootstrap</strong> (<code class="inline">argocd_apps.tf</code>) — repo-creds
+template, local-cluster registration, RBAC for the ArgoCD capability role, and the two root
+<code class="inline">Application</code> resources.</li>
+<li><strong>Apply remaining prerequisites</strong> (<code class="inline">external_secrets.tf</code>) for ESO's
+IAM/Pod Identity wiring.</li>
+<li><strong>Verify capability health</strong> — confirm all three capabilities show <code class="inline">ACTIVE</code>
+in the EKS console, and that the ArgoCD server URL (<code class="inline">terraform output argocd_url</code>)
+resolves.</li>
+<li><strong>Add ArgoCD admin users</strong> — Identity Center console → Groups → <code class="inline">ARGOCD_ADMIN</code>
+→ add the people who need admin access (this is intentionally not Terraform-managed).</li>
+<li><strong>Confirm GitOps sync</strong> — both Applications should reach <code class="inline">Synced</code>/<code class="inline">Healthy</code>.
+Validate end-to-end by committing one trivial ACK custom resource (e.g. an S3 bucket CR) to a GitOps repo and
+confirming the real AWS resource is created.</li>
+<li><strong>Build out the application layer</strong> — kro <code class="inline">ResourceGraphDefinition</code>s
+composing ACK resources into the higher-level, self-service APIs application teams actually need.</li>
+</ol>
+
+<h1>11. Troubleshooting &amp; Lessons Learned</h1>
+<p>This section documents real issues encountered during the build, in case they recur.</p>
+<table>
+<tr><th>Symptom</th><th>Root Cause</th><th>Fix</th></tr>
+<tr><td>EKS addon apply errors on <code class="inline">resolve_conflicts</code></td>
+<td>Not a real argument on <code class="inline">aws_eks_addon</code></td>
+<td>Use <code class="inline">resolve_conflicts_on_create</code>/<code class="inline">_on_update</code></td></tr>
+<tr><td>Terraform error referencing <code class="inline">aws_autoscaling_groups_data</code></td>
+<td>Hallucinated/nonexistent data source name</td>
+<td>Real name is <code class="inline">aws_autoscaling_groups</code> (no <code class="inline">_data</code> suffix)</td></tr>
+<tr><td><code class="inline">vpc_config</code> rejected on <code class="inline">aws_eks_node_group</code></td>
+<td>That argument does not exist on this resource at all</td>
+<td>Attach a custom SG via <code class="inline">launch_template</code> instead</td></tr>
+<tr><td><code class="inline">taints</code> block rejected</td>
+<td>Block name is singular</td>
+<td>Use <code class="inline">taint</code></td></tr>
+<tr><td><code class="inline">CreateCapability</code> 400: trust policy invalid</td>
+<td>Wrong principal (<code class="inline">eks.amazonaws.com</code>) and/or missing <code class="inline">sts:TagSession</code></td>
+<td>Principal must be <code class="inline">capabilities.eks.amazonaws.com</code> with both actions; add a
+<code class="inline">time_sleep</code> for propagation</td></tr>
+<tr><td><code class="inline">CreateAccessEntry</code> 409: ResourceInUseException</td>
+<td>EKS already auto-created the entry as a side effect of capability/node-group creation</td>
+<td>Import the existing resource, or delete it on the AWS side and let Terraform recreate cleanly</td></tr>
+<tr><td>EC2 node group creation: <code class="inline">Ec2InstanceTypeDoesNotExist</code></td>
+<td>Instance type not offered in the target region</td>
+<td>Verify with <code class="inline">aws ec2 describe-instance-type-offerings</code> before adding new types</td></tr>
+<tr><td><code class="inline">kubernetes_manifest</code>: "Unauthorized" from the API server</td>
+<td>Statically-fetched <code class="inline">data.aws_eks_cluster_auth</code> token (~15 min validity) expired
+before a long apply reached that resource</td>
+<td>Switch the <code class="inline">kubernetes</code> provider to <code class="inline">exec</code>-based auth
+(<code class="inline">aws eks get-token</code>), generating a fresh token per API call</td></tr>
+<tr><td>ArgoCD Application never syncs, no cluster errors visible</td>
+<td><code class="inline">destination.server = "https://kubernetes.default.svc"</code> is unsupported by this
+capability</td><td>Register the cluster by ARN and reference it via <code class="inline">destination.name</code></td></tr>
+<tr><td>Uniform "forbidden" on every resource kind regardless of RBAC rule breadth</td>
+<td><code class="inline">ClusterRoleBinding</code> subject had a stray <code class="inline">namespace</code>
+field on a Group-kind subject, invalidating the entire binding per the Kubernetes API spec</td>
+<td>Explicitly set <code class="inline">namespace = ""</code> on Group/User subjects</td></tr>
+<tr><td><code class="inline">kubernetes_groups[0]</code>: "Invalid index"</td>
+<td><code class="inline">kubernetes_groups</code> on <code class="inline">aws_eks_access_entry</code> is a set, not
+a list — sets have no index</td><td>Define the group name once as a <code class="inline">local</code> and reuse
+it, instead of reading it back off the resource</td></tr>
+<tr><td><code class="inline">ArgoCD: "revision main must be resolved"</code></td>
+<td>Either (a) the PAT's fine-grained repository access excludes that repo, (b) the Secrets Manager JSON used the
+wrong key names, or (c) the token was rotated/expired</td>
+<td>Verify PAT repo access first (does not require a Terraform change); confirm JSON keys are exactly
+<code class="inline">username</code>/<code class="inline">token</code></td></tr>
+<tr><td>ArgoCD Settings → Repositories shows "No repositories connected" despite working syncs</td>
+<td>The page only lists explicit <code class="inline">repository</code>-type secrets, never
+<code class="inline">repo-creds</code> templates</td><td>Cosmetic; add explicit per-repo secrets only if UI
+visibility is required, at the cost of losing automatic coverage for future repos</td></tr>
+<tr><td>kro can create RGDs but not what they compose (e.g. ACK <code class="inline">Policy</code>/<code class="inline">Role</code>)</td>
+<td><code class="inline">AmazonEKSEditPolicy</code> never covered ACK's custom resource API groups</td>
+<td>Escalate to <code class="inline">AmazonEKSClusterAdminPolicy</code> via
+<code class="inline">aws_eks_access_policy_association</code> (no group-binding risk, unlike custom ClusterRoles)</td></tr>
+<tr><td><code class="inline">terraform init</code>: "Duplicate required providers configuration"</td>
+<td>A Terraform module may have only one <code class="inline">required_providers</code> block, even split across
+files</td><td>Consolidate all provider declarations into a single block</td></tr>
+</table>
+
+<h1>12. Security Considerations &amp; Follow-ups</h1>
+<ul>
+  <li><strong>ACK's <code class="inline">IAMFullAccess</code> grant</strong> is the single largest blast-radius
+  item in this platform — any reviewer with merge access to either GitOps repo can, in effect, create or escalate
+  IAM roles. Recommended follow-up: narrow to a custom policy scoped by role-name prefix once the actual set of
+  IAM resources ACK needs to manage is known.</li>
+  <li><strong>kro, ACK's own AWS IAM scope, and the ArgoCD capability all currently hold full
+  <code class="inline">AmazonEKSClusterAdminPolicy</code></strong> (the latter two for the first-time-apply safety
+  reasons in §11; kro per §8.2's whack-a-mole finding). These were chosen deliberately over continued incremental,
+  per-resource-kind patching. <strong>Narrowing kro's Kubernetes RBAC alone would not reduce the IAM blast radius
+  described in §8.4</strong> — ACK's own AWS-side <code class="inline">IAMFullAccess</code> would still allow the
+  same end result via any other path that reaches an <code class="inline">iam.services.k8s.aws</code> custom
+  resource. The two need to be narrowed together, not independently, to be meaningful. A custom
+  <code class="inline">ClusterRole</code> scoped to exactly the API groups in active use is the tighter Kubernetes
+  RBAC alternative (apply the namespace-subject lesson from §5.3.3 if doing so).</li>
+  <li><strong>ArgoCD's server is public by design</strong>, gated by Identity Center SSO rather than network
+  controls. Re-evaluate if a private-only posture becomes a compliance requirement
+  (<code class="inline">network_access.vpce_ids</code>).</li>
+  <li><strong>The current applying principal's implicit cluster-admin access</strong> (granted by EKS to whoever
+  created the cluster) is a single point of coupling between the GitHub Actions role and several Terraform-managed
+  Kubernetes resources. Document or pin that role explicitly rather than relying on "whoever happened to run the
+  first apply."</li>
+</ul>
+
+<h1>13. Appendix: File &amp; Variable Reference</h1>
+<h3>Terraform files (<code class="inline">terraform/</code>)</h3>
+<table>
+<tr><th>File</th><th>Contents</th></tr>
+<tr><td>main.tf</td><td>Providers, VPC/subnet/route-table resources</td></tr>
+<tr><td>variables.tf / terraform.tfvars</td><td>All input variables and their values</td></tr>
+<tr><td>iam.tf</td><td>Cluster and node IAM roles</td></tr>
+<tr><td>security_groups.tf</td><td>Cluster/node security groups and standalone rules</td></tr>
+<tr><td>eks_cluster.tf</td><td>EKS cluster resource, Pod Identity addon, VPC CNI, CoreDNS, kube-proxy</td></tr>
+<tr><td>node_groups.tf</td><td>Launch template, on-demand and spot managed node groups, ASG tags</td></tr>
+<tr><td>capabilities.tf</td><td>ACK / kro / ArgoCD capability resources, their IAM roles, RBAC/access-policy
+associations, Identity Center integration</td></tr>
+<tr><td>argocd_apps.tf</td><td>Kubernetes provider, repo-creds template, cluster registration, ArgoCD capability
+RBAC, the two root Applications</td></tr>
+<tr><td>external_secrets.tf</td><td>External Secrets Operator IAM role, scoped Secrets Manager policy, Pod
+Identity association</td></tr>
+<tr><td>outputs.tf</td><td>All output values, including <code class="inline">argocd_url</code> and capability role
+ARNs</td></tr>
+<tr><td>backend.tf</td><td>S3 remote state backend with native S3 locking</td></tr>
+</table>
+
+<h3>Key variables</h3>
+<table>
+<tr><th>Variable</th><th>Default</th><th>Purpose</th></tr>
+<tr><td>cluster_version</td><td>1.36</td><td>Kubernetes version</td></tr>
+<tr><td>on_demand_desired_size / spot_desired_size</td><td>2 / 3</td><td>Fixed node counts</td></tr>
+<tr><td>on_demand_instance_types / spot_instance_types</td><td>t4g.large, m6g.large</td><td>Graviton instance
+families, confirmed available in ap-south-1</td></tr>
+<tr><td>node_ami_type</td><td>AL2023_ARM_64_STANDARD</td><td>Must match the arm64 instance types above</td></tr>
+<tr><td>argocd_admin_group_name</td><td>ARGOCD_ADMIN</td><td>Identity Center group mapped to ArgoCD's ADMIN role</td></tr>
+<tr><td>argocd_apps_repo_url / argocd_self_managed_repo_url</td><td>the two CloudScope repos</td><td>GitOps sources</td></tr>
+<tr><td>external_secrets_secret_arns</td><td>[] (falls back to a naming-convention prefix)</td><td>Override with
+exact ARNs once known</td></tr>
+</table>
+
+<footer class="page-footer">smart-infra-manager-eks &middot; Technical Documentation &middot; ap-south-1 &middot; Kubernetes 1.36</footer>
+
+</body>
+</html>

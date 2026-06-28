@@ -89,6 +89,10 @@ terraform plan
 ```
 
 ### 3. Apply Configuration
+
+**First-ever apply against a brand-new cluster needs two passes — see
+[First-Time Bootstrap](#first-time-bootstrap) below.** Every apply after that (including all normal CI/CD runs)
+is a single pass:
 ```bash
 terraform apply
 ```
@@ -97,6 +101,46 @@ terraform apply
 ```bash
 terraform destroy
 ```
+
+## First-Time Bootstrap
+
+**Required only the first time this is ever applied against a brand-new cluster** (or after a full
+`terraform destroy`). Not required for normal day-to-day applies, including CI/CD — once the cluster and the
+ArgoCD capability exist, every later apply works in one pass.
+
+**Why:** the two `kubernetes_manifest` resources (the ArgoCD `Application` objects in `argocd_apps.tf`) need to
+introspect the live `Application` CRD's schema at *plan* time, which only exists once the ArgoCD capability has
+already been created. Per the `kubernetes_manifest` resource's own documentation: *"This resource requires API
+access during planning time... and thus cannot be created in the same apply operation"* as the cluster it
+targets. On a truly first-ever apply, planning the whole configuration in one pass will fail for exactly these
+two resources — not because anything is misconfigured, but because the CRD they depend on doesn't exist yet at
+the moment `plan` runs.
+
+**Fix: two passes.** First, create everything except the two `Application` resources:
+```bash
+terraform apply \
+  -target=aws_eks_capability.ack \
+  -target=aws_eks_capability.kro \
+  -target=aws_eks_capability.argocd \
+  -target=aws_eks_addon.coredns \
+  -target=aws_eks_addon.kube_proxy \
+  -target=aws_eks_addon.vpc_cni \
+  -target=aws_eks_access_policy_association.ack_secret_reader \
+  -target=aws_eks_access_policy_association.kro_edit \
+  -target=aws_eks_access_policy_association.kro_cluster_admin \
+  -target=aws_eks_access_policy_association.argocd_write_argocd_ns \
+  -target=aws_eks_access_policy_association.argocd_cluster_admin \
+  -target=kubernetes_secret_v1.argocd_github_org_creds \
+  -target=kubernetes_secret_v1.argocd_local_cluster \
+  -target=aws_eks_pod_identity_association.external_secrets
+```
+Then a normal, untargeted apply picks up the two `Application` resources (the ArgoCD capability's CRDs now exist,
+so the cluster is reachable and plannable) plus anything else not covered by the targeted list above:
+```bash
+terraform apply
+```
+This second command is safe to run any number of times — it is the same command used for every routine apply
+going forward.
 
 ## Customization
 
