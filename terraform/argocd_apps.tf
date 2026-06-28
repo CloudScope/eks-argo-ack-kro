@@ -205,6 +205,11 @@ resource "kubernetes_cluster_role_binding_v1" "argocd_read_all" {
     kind      = "Group"
     name      = local.argocd_capability_group
     api_group = "rbac.authorization.k8s.io"
+    # Explicitly empty: namespace is meaningless for Group/User subjects (only
+    # ServiceAccount uses it) and per the Kubernetes API spec, a non-empty value here
+    # on a non-namespaced kind can make the binding invalid. Without this, the provider
+    # defaulted it to "default", which silently broke this binding from the start.
+    namespace = ""
   }
 }
 
