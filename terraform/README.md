@@ -130,6 +130,8 @@ terraform apply \
   -target=aws_eks_access_policy_association.kro_cluster_admin \
   -target=aws_eks_access_policy_association.argocd_write_argocd_ns \
   -target=aws_eks_access_policy_association.argocd_cluster_admin \
+  -target=aws_eks_access_entry.argocd_capability \
+  -target=kubernetes_cluster_role_binding_v1.argocd_read_all \
   -target=kubernetes_secret_v1.argocd_github_org_creds \
   -target=kubernetes_secret_v1.argocd_local_cluster \
   -target=aws_eks_pod_identity_association.external_secrets

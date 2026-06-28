@@ -120,11 +120,41 @@ resource "kubernetes_secret_v1" "argocd_local_cluster" {
   depends_on = [aws_eks_capability.argocd]
 }
 
+# Defined once here (rather than reading kubernetes_groups back off the resource,
+# which is a set and can't be indexed) and reused below for the ClusterRoleBinding subject.
+locals {
+  argocd_capability_group = "argocd-capability"
+}
+
+# REVERTED 2026-06-28: this was briefly replaced with a pure aws_eks_access_policy_association
+# (AmazonEKSClusterAdminPolicy) approach for first-apply-safety reasons - associations
+# can't conflict with EKS's auto-created access entry the way an explicit
+# aws_eks_access_entry resource can on a true first-ever apply. That's still true, but
+# this cluster is already bootstrapped and isn't being recreated from scratch, and the
+# safety fix itself caused a real outage here: removing this resource block while it
+# was still tracked in Terraform state caused `terraform apply` to DELETE the live
+# access entry (Terraform's normal behavior - config says it shouldn't exist, so it
+# destroys what's in state), which broke the ArgoCD capability's ability to reach the
+# cluster at all (EKS does not recreate this automatically once the capability is
+# already running, only at capability-creation time).
+#
+# *** If this resource is ever removed from config again, run
+# `terraform state rm 'aws_eks_access_entry.argocd_capability[0]'` FIRST. That detaches
+# it from Terraform's bookkeeping without touching the live AWS resource. Removing the
+# block and applying without doing that WILL delete the live access entry again. ***
+resource "aws_eks_access_entry" "argocd_capability" {
+  count             = var.enable_argocd_capability ? 1 : 0
+  cluster_name      = aws_eks_cluster.main.name
+  principal_arn     = aws_iam_role.argocd_capability[0].arn
+  kubernetes_groups = [local.argocd_capability_group]
+  type              = "STANDARD"
+}
+
 # Namespace-scoped WRITE for where Applications actually deploy - "argocd" for now,
 # since that's the only destination namespace declared below. This is an AWS-native
-# access policy association, applied directly to the principal - no access entry or
-# Kubernetes group/RBAC object of our own involved. Extend with another
-# namespace-scoped association (same pattern) if/when repos target other namespaces.
+# access policy association, applied directly to the principal with no group/RBAC
+# object needed. Extend with another namespace-scoped association (same pattern)
+# if/when repos target other namespaces.
 resource "aws_eks_access_policy_association" "argocd_write_argocd_ns" {
   count         = var.enable_argocd_capability ? 1 : 0
   cluster_name  = aws_eks_cluster.main.name
@@ -139,23 +169,9 @@ resource "aws_eks_access_policy_association" "argocd_write_argocd_ns" {
   depends_on = [aws_eks_capability.argocd]
 }
 
-# Cluster-wide READ (needed for ArgoCD's health checks/drift detection across any
-# resource type, any API group - no AWS access policy grants a true */* view, so this
-# uses cluster-admin rather than a narrower one).
-#
-# This used to be a custom kubernetes_cluster_role_v1 + _binding_v1, bound via an
-# explicit aws_eks_access_entry with hand-set kubernetes_groups. Replaced for two
-# reasons: (1) that ClusterRoleBinding had a subtle bug - Group-kind subjects default
-# `namespace` to "default" unless explicitly emptied, which silently invalidates the
-# whole binding per the Kubernetes API spec - and (2) more importantly, EKS
-# auto-creates an access entry for a capability role's principal the moment the
-# capability itself is created, so a Terraform-managed aws_eks_access_entry for the
-# same principal ALWAYS collides with CreateAccessEntry on a true first-ever apply -
-# no depends_on can fix this, since the conflict is in which API call gets made, not
-# its ordering. aws_eks_access_policy_association has no such failure mode: it only
-# *associates* a policy with whatever access entry already exists, so it works
-# identically whether this is the first apply ever or the hundredth. Same pattern
-# used for kro's permissions in capabilities.tf.
+# Extra cluster-admin grant added during an earlier diagnostic pass; left in place
+# alongside the restored ClusterRole below rather than removed, since the two don't
+# conflict and this was already confirmed to help unblock things.
 resource "aws_eks_access_policy_association" "argocd_cluster_admin" {
   count         = var.enable_argocd_capability ? 1 : 0
   cluster_name  = aws_eks_cluster.main.name
@@ -167,6 +183,51 @@ resource "aws_eks_access_policy_association" "argocd_cluster_admin" {
   }
 
   depends_on = [aws_eks_capability.argocd]
+}
+
+# Cluster-wide READ (for health checks/drift detection across any resource type, any
+# API group - hence a custom wildcard ClusterRole rather than a built-in view policy,
+# since no AWS access policy grants true */* read). This needs the explicit group
+# above, bound via the ClusterRoleBinding below.
+resource "kubernetes_cluster_role_v1" "argocd_read_all" {
+  count = var.enable_argocd_capability ? 1 : 0
+
+  metadata {
+    name = "argocd-read-all"
+  }
+
+  rule {
+    api_groups = ["*"]
+    resources  = ["*"]
+    verbs      = ["get", "list", "watch"]
+  }
+
+  depends_on = [aws_eks_capability.argocd]
+}
+
+resource "kubernetes_cluster_role_binding_v1" "argocd_read_all" {
+  count = var.enable_argocd_capability ? 1 : 0
+
+  metadata {
+    name = "argocd-read-all"
+  }
+
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role_v1.argocd_read_all[0].metadata[0].name
+  }
+
+  subject {
+    kind      = "Group"
+    name      = local.argocd_capability_group
+    api_group = "rbac.authorization.k8s.io"
+    # Explicitly empty: namespace is meaningless for Group/User subjects (only
+    # ServiceAccount uses it) and per the Kubernetes API spec, a non-empty value here
+    # on a non-namespaced kind can make the binding invalid. Without this, the provider
+    # defaulted it to "default", which silently broke this binding the first time around.
+    namespace = ""
+  }
 }
 
 # The IAM principal running `terraform apply` needs Kubernetes RBAC access to create
@@ -221,6 +282,7 @@ resource "kubernetes_manifest" "argocd_app_of_apps" {
     kubernetes_secret_v1.argocd_local_cluster,
     aws_eks_access_policy_association.argocd_write_argocd_ns,
     aws_eks_access_policy_association.argocd_cluster_admin,
+    kubernetes_cluster_role_binding_v1.argocd_read_all,
   ]
 }
 
@@ -266,5 +328,6 @@ resource "kubernetes_manifest" "argocd_self_managed" {
     kubernetes_secret_v1.argocd_local_cluster,
     aws_eks_access_policy_association.argocd_write_argocd_ns,
     aws_eks_access_policy_association.argocd_cluster_admin,
+    kubernetes_cluster_role_binding_v1.argocd_read_all,
   ]
 }
