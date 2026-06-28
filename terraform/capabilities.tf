@@ -225,6 +225,30 @@ resource "aws_eks_access_policy_association" "kro_edit" {
   depends_on = [aws_eks_capability.kro]
 }
 
+# AmazonEKSEditPolicy's rules are a fixed, AWS-enumerated list of API groups (apps,
+# batch, networking.k8s.io, core resources, etc.) - it never included ACK's custom
+# resource groups (iam.services.k8s.aws, s3.services.k8s.aws, ...) at all. kro
+# orchestrates whatever CRD kinds an RGD's resources list references, so its RBAC has
+# to cover every ACK service group any current or future RGD might use, not just the
+# ones already hit (Policy, then Role, then Secret, ...). Same root cause and same
+# unbounded whack-a-mole as the ArgoCD capability role's CSIDriver/ModelPackage/etc.
+# errors - fixed the same way: a blanket grant instead of incremental per-kind ones.
+# Unlike that case, aws_eks_access_policy_association applies directly to the
+# principal_arn with no Kubernetes group/ClusterRoleBinding involved, so this isn't
+# at risk of the same group-binding bug - no further Terraform pieces needed.
+resource "aws_eks_access_policy_association" "kro_cluster_admin" {
+  count         = var.enable_kro_capability ? 1 : 0
+  cluster_name  = aws_eks_cluster.main.name
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+  principal_arn = aws_iam_role.kro_capability[0].arn
+
+  access_scope {
+    type = "cluster"
+  }
+
+  depends_on = [aws_eks_capability.kro]
+}
+
 # AWS supports exactly one IAM Identity Center instance per organization/account, so
 # it can be resolved automatically rather than asking for the ARN to be pasted in.
 data "aws_ssoadmin_instances" "this" {
