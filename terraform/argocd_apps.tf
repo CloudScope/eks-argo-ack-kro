@@ -132,11 +132,14 @@ locals {
   argocd_capability_group = "argocd-capability"
 }
 
-# Since EKS auto-created this entry when the ArgoCD capability itself was created, the
-# first apply of this exact resource will hit a "ResourceInUseException" unless it's
-# imported first:
-#   terraform import 'aws_eks_access_entry.argocd_capability[0]' \
-#     smart-infra-manager-eks:arn:aws:iam::085960855786:role/smart-infra-manager-eks-argocd-capability-role
+# EKS auto-creates this entry as a side effect of creating the ArgoCD capability
+# itself, outside of Terraform - so this resource needs a clean slate to create
+# against, or it hits a "ResourceInUseException". Deleted manually once via:
+#   aws eks delete-access-entry --cluster-name smart-infra-manager-eks \
+#     --principal-arn arn:aws:iam::085960855786:role/smart-infra-manager-eks-argocd-capability-role
+# (an alternative to `terraform import`, with a brief auth gap for this principal
+# between delete and the next apply - acceptable since access entries hold no data,
+# Terraform just recreates the same logical entry with kubernetes_groups set correctly).
 resource "aws_eks_access_entry" "argocd_capability" {
   count             = var.enable_argocd_capability ? 1 : 0
   cluster_name      = aws_eks_cluster.main.name
