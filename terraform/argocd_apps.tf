@@ -168,6 +168,28 @@ resource "aws_eks_access_policy_association" "argocd_write_argocd_ns" {
   depends_on = [aws_eks_capability.argocd]
 }
 
+# TEMPORARY DIAGNOSTIC: full cluster-admin, to confirm once and for all whether the
+# custom ClusterRole/ClusterRoleBinding below (read-all) is really the root cause of
+# the uniform "forbidden" errors across every resource type, or whether something else
+# is involved (e.g. the access entry's group resolution itself). Additive - associating
+# a new policy on an access entry that already exists, not creating a duplicate entry,
+# so this doesn't conflict with aws_eks_access_entry.argocd_capability above. Once
+# confirmed working, narrow this back down (remove this resource) rather than leaving
+# cluster-admin permanently attached to a capability role merge-accessible from two
+# git repos.
+resource "aws_eks_access_policy_association" "argocd_cluster_admin_diagnostic" {
+  count         = var.enable_argocd_capability ? 1 : 0
+  cluster_name  = aws_eks_cluster.main.name
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+  principal_arn = aws_iam_role.argocd_capability[0].arn
+
+  access_scope {
+    type = "cluster"
+  }
+
+  depends_on = [aws_eks_capability.argocd]
+}
+
 # Cluster-wide READ (for health checks/drift detection across any resource type, any
 # API group - hence a custom wildcard ClusterRole rather than a built-in view policy,
 # since no AWS access policy grants true */* read). This DOES need the explicit group
