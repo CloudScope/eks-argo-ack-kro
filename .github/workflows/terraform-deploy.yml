@@ -16,6 +16,12 @@ on:
       - develop
     paths:
       - 'terraform/**'
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "destroy" to confirm you want to destroy the Terraform-managed infrastructure'
+        required: true
+        type: string
 
 env:
   AWS_REGION: ap-south-1
@@ -123,14 +129,23 @@ jobs:
           path: terraform/outputs.json
           retention-days: 30
 
-  terraform-destroy-dry-run:
-    name: Terraform Destroy Dry-Run (Manual)
+  terraform-destroy:
+    name: Terraform Destroy (Manual)
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch'
+    environment:
+      name: production
     permissions:
       contents: read
       id-token: write
     steps:
+      - name: Verify confirmation input
+        run: |
+          if [ "${{ inputs.confirm }}" != "destroy" ]; then
+            echo "Confirmation input did not match 'destroy'. Aborting." >&2
+            exit 1
+          fi
+
       - name: Checkout code
         uses: actions/checkout@v7
 
@@ -150,7 +165,12 @@ jobs:
           cd terraform
           terraform init
 
-      - name: Terraform Destroy Plan (Dry-Run)
+      - name: Terraform Destroy Plan
         run: |
           cd terraform
-          terraform plan -destroy -no-color
+          terraform plan -destroy -no-color -out=tfplan-destroy
+
+      - name: Terraform Destroy Apply
+        run: |
+          cd terraform
+          terraform apply -auto-approve tfplan-destroy
